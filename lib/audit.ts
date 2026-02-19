@@ -20,6 +20,16 @@ export interface AuditResult {
   categories: Record<string, { passed: number; failed: number; warnings: number }>;
 }
 
+export interface ImprovementSuggestion {
+  id: string;
+  title: string;
+  severity: Severity;
+  category: string;
+  recommendation: string;
+  fixExample?: string;
+  affectedCount: number;
+}
+
 export interface FullSiteResult {
   origin: string;
   pages: AuditResult[];
@@ -27,6 +37,8 @@ export interface FullSiteResult {
   overallScore: number;
   categories: Record<string, { passed: number; failed: number; warnings: number }>;
   pagesAudited: number;
+  totalUrlsInSitemap: number;
+  improvementSuggestions: ImprovementSuggestion[];
 }
 
 function add(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { AuditResult, AuditIssue, Severity, FullSiteResult } from "@/lib/audit";
+import type { AuditResult, AuditIssue, Severity, FullSiteResult, ImprovementSuggestion } from "@/lib/audit";
 
 const severityStyles: Record<Severity, string> = {
   error: "bg-red-100 text-red-800 border-red-200",
@@ -26,7 +26,7 @@ export default function SEOAuditPage() {
   const [result, setResult] = useState<AuditResult | FullSiteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Severity | "all">("all");
-  const [tab, setTab] = useState<"overview" | "issues" | "pages">("overview");
+  const [tab, setTab] = useState<"overview" | "suggestions" | "issues" | "pages">("overview");
 
   const run = async () => {
     setLoading(true);
@@ -90,7 +90,7 @@ export default function SEOAuditPage() {
             onChange={(e) => setFullSite(e.target.checked)}
             className="rounded border-slate-300"
           />
-          <span className="text-sm text-slate-700">Hele sitet (via sitemap, op til 8 sider)</span>
+          <span className="text-sm text-slate-700">Hele sitet (crawler hele sitemap, auditerer op til 25 sider)</span>
         </label>
         <button
           type="button"
@@ -98,7 +98,7 @@ export default function SEOAuditPage() {
           disabled={loading}
           className="rounded-lg bg-slate-800 px-5 py-2.5 font-medium text-white hover:bg-slate-700 disabled:opacity-50"
         >
-          {loading ? (fullSite ? "Crawler sitemap og tjekker sider…" : "Kører audit…") : "Kør audit"}
+          {loading ? (fullSite ? "Crawler hele sitemap og auditerer sider…" : "Kører audit…") : "Kør audit"}
         </button>
       </div>
 
@@ -131,7 +131,7 @@ export default function SEOAuditPage() {
 
           {full && (
             <p className="mt-2 text-sm text-slate-500">
-              Auditeret: {full.origin} – {full.pagesAudited} sider
+              Sitemap: {full.totalUrlsInSitemap ?? full.pagesAudited} URLs fundet. Auditeret: {full.origin} – {full.pagesAudited} sider.
             </p>
           )}
           {single && (
@@ -141,13 +141,20 @@ export default function SEOAuditPage() {
           )}
 
           {full && (
-            <div className="mt-6 flex gap-2 border-b border-slate-200">
+            <div className="mt-6 flex flex-wrap gap-2 border-b border-slate-200">
               <button
                 type="button"
                 onClick={() => setTab("overview")}
                 className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "overview" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
               >
                 Overblik
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("suggestions")}
+                className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "suggestions" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
+              >
+                Forbedringsforslag
               </button>
               <button
                 type="button"
@@ -163,6 +170,39 @@ export default function SEOAuditPage() {
               >
                 Pr. side
               </button>
+            </div>
+          )}
+
+          {tab === "suggestions" && full && full.improvementSuggestions && full.improvementSuggestions.length > 0 && (
+            <div className="mt-6 space-y-4">
+              <h2 className="text-lg font-semibold text-slate-800">Forbedringsforslag</h2>
+              <p className="text-sm text-slate-600">
+                Konkrete skridt for at rette fejl og advarsler. Sorteret efter alvorlighed (fejl først).
+              </p>
+              <div className="space-y-4">
+                {full.improvementSuggestions.map((s: ImprovementSuggestion) => (
+                  <div
+                    key={s.id}
+                    className={`rounded-xl border p-4 ${s.severity === "error" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded px-2 py-0.5 text-xs font-semibold uppercase ${s.severity === "error" ? "bg-red-200 text-red-800" : "bg-amber-200 text-amber-800"}`}>
+                        {s.severity === "error" ? "Fejl" : "Advarsel"}
+                      </span>
+                      <span className="text-sm text-slate-600">{s.category}</span>
+                      <span className="text-xs text-slate-500">· {s.affectedCount} side{s.affectedCount !== 1 ? "r" : ""} berørt</span>
+                    </div>
+                    <h3 className="mt-2 font-semibold text-slate-800">{s.title}</h3>
+                    <p className="mt-1 text-sm text-slate-700">{s.recommendation}</p>
+                    {s.fixExample && (
+                      <div className="mt-3 rounded-lg bg-white p-3 font-mono text-xs text-slate-800">
+                        <span className="text-slate-500">Eksempel på rettelse:</span>
+                        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all">{s.fixExample}</pre>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
