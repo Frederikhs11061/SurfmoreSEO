@@ -1,0 +1,4 @@
+{
+  "framework": "next",
+  "buildCommand": "npm run build"
+}
