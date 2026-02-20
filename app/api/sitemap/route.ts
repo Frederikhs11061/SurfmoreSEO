@@ -31,6 +31,10 @@ export async function GET(req: NextRequest) {
       urlsToAudit,
       totalInSitemap,
       cached: !forceRefresh, // Indikerer om data kom fra cache
+    }, {
+      headers: {
+        "Cache-Control": "public, max-age=3600, immutable",
+      },
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

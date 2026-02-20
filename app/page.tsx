@@ -379,6 +379,24 @@ function SEOAuditPageContent() {
     const origin = domain.startsWith("http") ? new URL(domain).origin : `https://${domain}`;
     try {
       if (fullSite) {
+        // Tjek først om audit er cached
+        if (!forceRefresh) {
+          const cachedAuditRes = await fetch("/api/audit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: domain, fullSite: true, forceRefresh: false }),
+          });
+          if (cachedAuditRes.ok) {
+            const cachedData = await cachedAuditRes.json().catch(() => null);
+            if (cachedData && !cachedData.error) {
+              setResult(cachedData);
+              setLoading(false);
+              setProgress(null);
+              return; // Brug cached resultat
+            }
+          }
+        }
+        
         const sitemapRes = await fetch(`/api/sitemap?url=${encodeURIComponent(domain)}${forceRefresh ? "&forceRefresh=true" : ""}`);
         const sitemapData = await sitemapRes.json().catch(() => ({}));
         if (!sitemapRes.ok) throw new Error(sitemapData?.error || "Kunne ikke hente sitemap");
@@ -390,7 +408,7 @@ function SEOAuditPageContent() {
           const fallback = await fetch("/api/audit", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: domain, fullSite: true }),
+            body: JSON.stringify({ url: domain, fullSite: true, forceRefresh }),
           });
           const fallbackData = await fallback.json().catch(() => ({}));
           if (!fallback.ok) throw new Error(fallbackData?.error || "Audit fejlede");
@@ -404,41 +422,64 @@ function SEOAuditPageContent() {
           for (let i = 0; i < allUrls.length; i += BATCH_SIZE) {
             chunks.push(allUrls.slice(i, i + BATCH_SIZE));
           }
-          // Kør batches parallelt i grupper af CONCURRENT_BATCHES
+          
+          // Initialiser resultat med tom struktur for at undgå layout shift
+          const initialResult: FullSiteResult = {
+            origin,
+            pages: [],
+            aggregated: [],
+            overallScore: 0,
+            categories: {},
+            pagesAudited: 0,
+            totalUrlsInSitemap: totalInSitemap,
+            improvementSuggestions: [],
+          };
+          setResult(initialResult);
+          
+          // Kør batches parallelt i grupper af CONCURRENT_BATCHES og opdater sideløbende
           for (let i = 0; i < chunks.length; i += CONCURRENT_BATCHES) {
             const group = chunks.slice(i, i + CONCURRENT_BATCHES);
             const batchStart = i + 1;
             const batchEnd = Math.min(i + CONCURRENT_BATCHES, chunks.length);
             setProgress(`Auditerer batches ${batchStart}–${batchEnd} af ${totalBatches} (${allUrls.length} sider totalt)…`);
-            const groupResults = await Promise.all(
-              group.map(async (chunk, idx) => {
-                const batchNum = i + idx + 1;
+            
+            // Kør batches parallelt og opdater resultatet så snart hver batch er færdig
+            const groupPromises = group.map(async (chunk, idx) => {
+              const batchNum = i + idx + 1;
                 const res = await fetch("/api/audit", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ urlBatch: chunk, origin }),
+                  body: JSON.stringify({ urlBatch: chunk, origin, forceRefresh }),
                 });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(data?.error || `Batch ${batchNum} fejlede`);
-                if (data?.error) throw new Error(`Batch ${batchNum}: ${data.error}`);
-                return data;
-              })
-            );
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok) throw new Error(data?.error || `Batch ${batchNum} fejlede`);
+              if (data?.error) throw new Error(`Batch ${batchNum}: ${data.error}`);
+              return data;
+            });
+            
+            // Vent på alle batches i gruppen og opdater resultatet sideløbende
+            const groupResults = await Promise.all(groupPromises);
             batches.push(...groupResults);
+            
+            // Opdater resultatet med det samme for at undgå reflow
+            const currentMerged = mergeBatchResults(batches, totalInSitemap, origin);
+            setResult(currentMerged);
           }
-          setProgress("Samler resultater…");
-          const merged = mergeBatchResults(batches, totalInSitemap, origin);
-          setResult(merged);
+          
+          setProgress("Færdig!");
+          // Final merge for at sikre alt er korrekt
+          const finalMerged = mergeBatchResults(batches, totalInSitemap, origin);
+          setResult(finalMerged);
           // Gem kun essentiell data i localStorage (ikke alle pages for at undgå quota)
           try {
             const essentialData = {
-              origin: merged.origin,
-              overallScore: merged.overallScore,
-              categories: merged.categories,
-              pagesAudited: merged.pagesAudited,
-              totalUrlsInSitemap: merged.totalUrlsInSitemap,
-              aggregated: merged.aggregated,
-              improvementSuggestions: merged.improvementSuggestions,
+              origin: finalMerged.origin,
+              overallScore: finalMerged.overallScore,
+              categories: finalMerged.categories,
+              pagesAudited: finalMerged.pagesAudited,
+              totalUrlsInSitemap: finalMerged.totalUrlsInSitemap,
+              aggregated: finalMerged.aggregated,
+              improvementSuggestions: finalMerged.improvementSuggestions,
             };
             localStorage.setItem(`seo-audit-${domain}`, JSON.stringify(essentialData));
           } catch (e) {
@@ -448,13 +489,13 @@ function SEOAuditPageContent() {
               const oldKeys = keys.filter(k => k.startsWith('seo-audit-'));
               oldKeys.forEach(k => localStorage.removeItem(k));
               const essentialData = {
-                origin: merged.origin,
-                overallScore: merged.overallScore,
-                categories: merged.categories,
-                pagesAudited: merged.pagesAudited,
-                totalUrlsInSitemap: merged.totalUrlsInSitemap,
-                aggregated: merged.aggregated,
-                improvementSuggestions: merged.improvementSuggestions,
+                origin: finalMerged.origin,
+                overallScore: finalMerged.overallScore,
+                categories: finalMerged.categories,
+                pagesAudited: finalMerged.pagesAudited,
+                totalUrlsInSitemap: finalMerged.totalUrlsInSitemap,
+                aggregated: finalMerged.aggregated,
+                improvementSuggestions: finalMerged.improvementSuggestions,
               };
               localStorage.setItem(`seo-audit-${domain}`, JSON.stringify(essentialData));
             } catch {
