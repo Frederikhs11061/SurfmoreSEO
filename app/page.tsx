@@ -91,10 +91,14 @@ function SEOAuditPageContent() {
   const [sortPagesBy, setSortPagesBy] = useState<"score-asc" | "score-desc" | "url" | "category">("score-asc");
   const [pillarFilter, setPillarFilter] = useState<string>("all");
   const [pageNum, setPageNum] = useState(1);
+  const [suggestionsPageNum, setSuggestionsPageNum] = useState(1);
+  const [overviewPageNum, setOverviewPageNum] = useState(1);
+  const [eeatPageNum, setEeatPageNum] = useState(1);
   const ITEMS_PER_PAGE = 25;
   const [selectedIssue, setSelectedIssue] = useState<AuditIssue | null>(null);
   const [issueSearchQuery, setIssueSearchQuery] = useState("");
   const [issueSortBy, setIssueSortBy] = useState<"severity" | "category" | "title" | "pages">("severity");
+  const [eeatSortBy, setEeatSortBy] = useState<"score" | "url" | "author">("score");
 
   useEffect(() => {
     const pillar = searchParams.get("pillar");
@@ -186,8 +190,38 @@ function SEOAuditPageContent() {
           setProgress("Samler resultater…");
           const merged = mergeBatchResults(batches, totalInSitemap, origin);
           setResult(merged);
-          // Gem resultat i localStorage
-          localStorage.setItem(`seo-audit-${domain}`, JSON.stringify(merged));
+          // Gem kun essentiell data i localStorage (ikke alle pages for at undgå quota)
+          try {
+            const essentialData = {
+              origin: merged.origin,
+              overallScore: merged.overallScore,
+              categories: merged.categories,
+              pagesAudited: merged.pagesAudited,
+              totalUrlsInSitemap: merged.totalUrlsInSitemap,
+              aggregated: merged.aggregated,
+              improvementSuggestions: merged.improvementSuggestions,
+            };
+            localStorage.setItem(`seo-audit-${domain}`, JSON.stringify(essentialData));
+          } catch (e) {
+            // Hvis localStorage stadig fejler, prøv at rydde gamle entries
+            try {
+              const keys = Object.keys(localStorage);
+              const oldKeys = keys.filter(k => k.startsWith('seo-audit-'));
+              oldKeys.forEach(k => localStorage.removeItem(k));
+              const essentialData = {
+                origin: merged.origin,
+                overallScore: merged.overallScore,
+                categories: merged.categories,
+                pagesAudited: merged.pagesAudited,
+                totalUrlsInSitemap: merged.totalUrlsInSitemap,
+                aggregated: merged.aggregated,
+                improvementSuggestions: merged.improvementSuggestions,
+              };
+              localStorage.setItem(`seo-audit-${domain}`, JSON.stringify(essentialData));
+            } catch {
+              // Ignorer hvis det stadig fejler
+            }
+          }
         }
       } else {
         const res = await fetch("/api/audit", {
@@ -199,8 +233,18 @@ function SEOAuditPageContent() {
         if (!res.ok) throw new Error(data?.error || "Audit fejlede");
         if (data?.error) throw new Error(data.error);
         setResult(data);
-        // Gem også single-page resultat
-        localStorage.setItem(`seo-audit-${domain}`, JSON.stringify(data));
+        // Gem også single-page resultat (kun essentiell data)
+        try {
+          const essentialData = {
+            url: data.url,
+            score: data.score,
+            categories: data.categories,
+            issues: data.issues,
+          };
+          localStorage.setItem(`seo-audit-${domain}`, JSON.stringify(essentialData));
+        } catch {
+          // Ignorer hvis localStorage fejler
+        }
       }
       setTab("overview");
     } catch (e) {
@@ -265,7 +309,6 @@ function SEOAuditPageContent() {
     "Teknisk SEO": {},
     "On-page SEO": {},
     "Link building": {},
-    "Off-page SEO": {},
   };
   
   if (full?.pages) {
@@ -524,36 +567,92 @@ function SEOAuditPageContent() {
             </>
           )}
 
-          {tab === "suggestions" && full && suggestionsToShow.length > 0 && (
+          {tab === "suggestions" && full && (
             <div className="mt-6 space-y-4">
               <h2 className="text-lg font-semibold text-slate-800">Forbedringsforslag</h2>
               <p className="text-sm text-slate-600">
                 Konkrete skridt for at rette fejl og advarsler. {pillarFilter !== "all" && `Filtreret: ${pillarFilter}.`} Sorteret efter alvorlighed (fejl først).
               </p>
-              <div className="space-y-4">
-                {suggestionsToShow.map((s: ImprovementSuggestion) => (
-                  <div
-                    key={s.id}
-                    className={`rounded-xl border p-4 ${s.severity === "error" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded px-2 py-0.5 text-xs font-semibold uppercase ${s.severity === "error" ? "bg-red-200 text-red-800" : "bg-amber-200 text-amber-800"}`}>
-                        {s.severity === "error" ? "Fejl" : "Advarsel"}
-                      </span>
-                      <span className="text-sm text-slate-600">{s.category}</span>
-                      <span className="text-xs text-slate-500">· {s.affectedCount} side{s.affectedCount !== 1 ? "r" : ""} berørt</span>
+              {(() => {
+                // Vis alle fejl og advarsler, ikke kun suggestions
+                const allIssuesForSuggestions = filtered.filter((i: AuditIssue) => i.severity !== "pass");
+                const sortedSuggestions = [...allIssuesForSuggestions].sort((a, b) => {
+                  if (a.severity === "error" && b.severity !== "error") return -1;
+                  if (b.severity === "error" && a.severity !== "error") return 1;
+                  return 0;
+                });
+                const totalSuggestionsPages = Math.ceil(sortedSuggestions.length / ITEMS_PER_PAGE);
+                const suggestionsStartIdx = (suggestionsPageNum - 1) * ITEMS_PER_PAGE;
+                const suggestionsEndIdx = suggestionsStartIdx + ITEMS_PER_PAGE;
+                const paginatedSuggestions = sortedSuggestions.slice(suggestionsStartIdx, suggestionsEndIdx);
+                
+                return (
+                  <>
+                    <div className="space-y-4">
+                      {paginatedSuggestions.map((issue: AuditIssue) => {
+                        const affectedCount = issue.affectedPages?.length ?? (issue.pageUrl?.includes(" sider") ? parseInt(issue.pageUrl) : (issue.pageUrl ? 1 : 0));
+                        return (
+                          <div
+                            key={issue.id}
+                            className={`rounded-xl border-2 p-5 transition-all hover:shadow-lg ${issue.severity === "error" ? "bg-gradient-to-br from-red-50 to-rose-50 border-red-200" : "bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200"}`}
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`rounded-lg px-2 py-0.5 text-xs font-semibold uppercase ${issue.severity === "error" ? "bg-red-200 text-red-800" : "bg-amber-200 text-amber-800"}`}>
+                                {issue.severity === "error" ? "Fejl" : "Advarsel"}
+                              </span>
+                              <span className="text-sm font-medium text-slate-600">{issue.category}</span>
+                              {affectedCount > 0 && (
+                                <span className="text-xs font-medium text-slate-700">
+                                  {affectedCount} side{affectedCount !== 1 ? "r" : ""} berørt
+                                </span>
+                              )}
+                            </div>
+                            <h3 className="mt-2 text-lg font-bold text-slate-800">{issue.title}</h3>
+                            <p className="mt-1 text-sm text-slate-700">{issue.message}</p>
+                            {issue.recommendation && (
+                              <div className="mt-3 rounded-lg bg-gradient-to-r from-sky-50 to-blue-50 border-2 border-sky-200 p-3">
+                                <p className="text-sm font-semibold text-sky-900">💡 Anbefaling:</p>
+                                <p className="mt-1 text-sm text-slate-700">{issue.recommendation}</p>
+                              </div>
+                            )}
+                            {issue.value && (
+                              <div className="mt-3 rounded-lg bg-white/50 px-3 py-2 text-xs">
+                                <p className="break-all">{issue.value}</p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                    <h3 className="mt-2 font-semibold text-slate-800">{s.title}</h3>
-                    <p className="mt-1 text-sm text-slate-700">{s.recommendation}</p>
-                    {s.fixExample && (
-                      <div className="mt-3 rounded-lg bg-white p-3 font-mono text-xs text-slate-800">
-                        <span className="text-slate-500">Eksempel på rettelse:</span>
-                        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all">{s.fixExample}</pre>
+                    {totalSuggestionsPages > 1 && (
+                      <div className="mt-6 flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => setSuggestionsPageNum(Math.max(1, suggestionsPageNum - 1))}
+                          disabled={suggestionsPageNum === 1}
+                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                        >
+                          ← Forrige
+                        </button>
+                        <span className="text-sm text-slate-600">
+                          Side {suggestionsPageNum} af {totalSuggestionsPages} ({sortedSuggestions.length} forslag totalt)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSuggestionsPageNum(Math.min(totalSuggestionsPages, suggestionsPageNum + 1))}
+                          disabled={suggestionsPageNum === totalSuggestionsPages}
+                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                        >
+                          Næste →
+                        </button>
                       </div>
                     )}
-                  </div>
-                ))}
-              </div>
+                    {sortedSuggestions.length === 0 && (
+                      <p className="text-center text-slate-500">Ingen fejl eller advarsler at vise.</p>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           )}
 
@@ -563,39 +662,70 @@ function SEOAuditPageContent() {
                 Score pr. SEO-pille og kategori
                 {pillarFilter !== "all" && ` (${pillarFilter})`}
               </h2>
-              {(pillarFilter === "all" ? SEO_PILLARS : [pillarFilter as SEOPillar]).map((pillar) => {
-                const cats = pillarCategories[pillar];
-                const entries = Object.entries(cats);
-                if (entries.length === 0) return null;
+              {(() => {
+                const allPillars = (pillarFilter === "all" ? SEO_PILLARS : [pillarFilter as SEOPillar]);
+                const allEntries: Array<{ pillar: SEOPillar; name: string; c: any }> = [];
+                allPillars.forEach((pillar) => {
+                  const cats = pillarCategories[pillar];
+                  Object.entries(cats).forEach(([name, c]) => {
+                    allEntries.push({ pillar, name, c });
+                  });
+                });
+                const totalOverviewPages = Math.ceil(allEntries.length / ITEMS_PER_PAGE);
+                const overviewStartIdx = (overviewPageNum - 1) * ITEMS_PER_PAGE;
+                const overviewEndIdx = overviewStartIdx + ITEMS_PER_PAGE;
+                const paginatedEntries = allEntries.slice(overviewStartIdx, overviewEndIdx);
+                
                 return (
-                  <div key={pillar}>
-                    <h3 className="mb-2 font-medium text-slate-700">{pillar}</h3>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {entries.map(([name, c]) => {
-                        const total = c.passed + c.failed + c.warnings;
-                        const pct = total > 0 ? Math.round((c.passed / total) * 100) : 0;
-                        return (
-                          <div key={name} className="rounded-lg border border-slate-200 bg-white p-4">
-                            <div className="flex justify-between">
-                              <span className="font-medium text-slate-700">{name}</span>
-                              <span className="text-slate-500">{pct}%</span>
-                            </div>
-                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-                              <div
-                                className="h-full rounded-full bg-green-500"
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {c.totalPages} side{c.totalPages !== 1 ? "r" : ""} · {c.passed} OK, {c.warnings} advarsler, {c.failed} fejl
-                            </p>
+                  <>
+                    {paginatedEntries.map(({ pillar, name, c }) => {
+                      const total = c.passed + c.failed + c.warnings;
+                      const pct = total > 0 ? Math.round((c.passed / total) * 100) : 0;
+                      return (
+                        <div key={`${pillar}-${name}`} className="rounded-lg border-2 border-slate-200 bg-white p-4 shadow-sm">
+                          <div className="mb-1 text-xs font-medium text-slate-500">{pillar}</div>
+                          <div className="flex justify-between">
+                            <span className="font-semibold text-slate-700">{name}</span>
+                            <span className="font-medium text-slate-500">{pct}%</span>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-green-600"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {c.totalPages} side{c.totalPages !== 1 ? "r" : ""} · {c.passed} OK, {c.warnings} advarsler, {c.failed} fejl
+                          </p>
+                        </div>
+                      );
+                    })}
+                    {totalOverviewPages > 1 && (
+                      <div className="mt-6 flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => setOverviewPageNum(Math.max(1, overviewPageNum - 1))}
+                          disabled={overviewPageNum === 1}
+                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                        >
+                          ← Forrige
+                        </button>
+                        <span className="text-sm text-slate-600">
+                          Side {overviewPageNum} af {totalOverviewPages} ({allEntries.length} kategorier totalt)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setOverviewPageNum(Math.min(totalOverviewPages, overviewPageNum + 1))}
+                          disabled={overviewPageNum === totalOverviewPages}
+                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                        >
+                          Næste →
+                        </button>
+                      </div>
+                    )}
+                  </>
                 );
-              })}
+              })()}
             </div>
           )}
 
@@ -909,73 +1039,136 @@ function SEOAuditPageContent() {
               <p className="text-sm text-slate-600">
                 EEAT er Googles retningslinjer for kvalitetsindhold. Her er en oversigt over hvor godt sitet opfylder EEAT-kriterierne.
               </p>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {full.pages.map((page) => {
-                  const eeat = page.eeat;
-                  if (!eeat) return null;
-                  const score = [
-                    eeat.author ? 1 : 0,
-                    eeat.authorBio ? 1 : 0,
-                    eeat.expertise ? 1 : 0,
-                    eeat.trustworthiness ? 1 : 0,
-                    eeat.aboutPage ? 1 : 0,
-                    eeat.contactInfo ? 1 : 0,
-                  ].reduce((a, b) => a + b, 0);
-                  const maxScore = 6;
-                  const pct = Math.round((score / maxScore) * 100);
-                  return (
-                    <div key={page.url} className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="truncate text-sm font-medium text-slate-700">{page.url}</span>
-                        <span className="text-sm font-semibold text-slate-800">{pct}%</span>
-                      </div>
-                      <div className="space-y-1.5 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className={eeat.author ? "text-green-600" : "text-red-600"}>
-                            {eeat.author ? "✓" : "✗"}
-                          </span>
-                          <span className="text-slate-600">Forfatter: {eeat.author || "Mangler"}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={eeat.authorBio ? "text-green-600" : "text-red-600"}>
-                            {eeat.authorBio ? "✓" : "✗"}
-                          </span>
-                          <span className="text-slate-600">Forfatterbiografi</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={eeat.expertise ? "text-green-600" : "text-red-600"}>
-                            {eeat.expertise ? "✓" : "✗"}
-                          </span>
-                          <span className="text-slate-600">Ekspertise-signaler</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={eeat.trustworthiness ? "text-green-600" : "text-red-600"}>
-                            {eeat.trustworthiness ? "✓" : "✗"}
-                          </span>
-                          <span className="text-slate-600">Troværdighed</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={eeat.aboutPage ? "text-green-600" : "text-red-600"}>
-                            {eeat.aboutPage ? "✓" : "✗"}
-                          </span>
-                          <span className="text-slate-600">Om-side link</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={eeat.contactInfo ? "text-green-600" : "text-red-600"}>
-                            {eeat.contactInfo ? "✓" : "✗"}
-                          </span>
-                          <span className="text-slate-600">Kontaktinformation</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="mb-4 flex items-center gap-3">
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  Sorter efter:
+                  <select
+                    value={eeatSortBy}
+                    onChange={(e) => setEeatSortBy(e.target.value as typeof eeatSortBy)}
+                    className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  >
+                    <option value="score">Score (højeste først)</option>
+                    <option value="url">URL (alfabetisk)</option>
+                    <option value="author">Forfatter</option>
+                  </select>
+                </label>
               </div>
-              {full.pages.filter((p) => !p.eeat).length > 0 && (
-                <p className="text-sm text-slate-500">
-                  {full.pages.filter((p) => !p.eeat).length} sider har ikke EEAT-data (måske ikke-2xx sider der blev sprunget over).
-                </p>
-              )}
+              {(() => {
+                const pagesWithEeat = full.pages
+                  .map((page) => {
+                    const eeat = page.eeat;
+                    if (!eeat) return null;
+                    const score = [
+                      eeat.author ? 1 : 0,
+                      eeat.authorBio ? 1 : 0,
+                      eeat.expertise ? 1 : 0,
+                      eeat.trustworthiness ? 1 : 0,
+                      eeat.aboutPage ? 1 : 0,
+                      eeat.contactInfo ? 1 : 0,
+                    ].reduce((a, b) => a + b, 0);
+                    const maxScore = 6;
+                    const pct = Math.round((score / maxScore) * 100);
+                    return { page, eeat, score, pct };
+                  })
+                  .filter((p): p is NonNullable<typeof p> => p !== null);
+                
+                const sortedEeat = [...pagesWithEeat].sort((a, b) => {
+                  if (eeatSortBy === "score") return b.score - a.score;
+                  if (eeatSortBy === "url") return a.page.url.localeCompare(b.page.url);
+                  if (eeatSortBy === "author") {
+                    const aAuthor = a.eeat.author || "";
+                    const bAuthor = b.eeat.author || "";
+                    return aAuthor.localeCompare(bAuthor) || a.page.url.localeCompare(b.page.url);
+                  }
+                  return 0;
+                });
+                
+                const totalEeatPages = Math.ceil(sortedEeat.length / ITEMS_PER_PAGE);
+                const eeatStartIdx = (eeatPageNum - 1) * ITEMS_PER_PAGE;
+                const eeatEndIdx = eeatStartIdx + ITEMS_PER_PAGE;
+                const paginatedEeat = sortedEeat.slice(eeatStartIdx, eeatEndIdx);
+                
+                return (
+                  <>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {paginatedEeat.map(({ page, eeat, score, pct }) => (
+                        <div key={page.url} className="rounded-xl border-2 border-slate-200 bg-white p-5 shadow-sm">
+                          <div className="mb-3 flex items-center justify-between">
+                            <Link href={`/page/${encodeURIComponent(page.url)}`} className="truncate text-sm font-semibold text-sky-600 hover:underline">
+                              {page.url}
+                            </Link>
+                            <span className="text-lg font-bold text-slate-800">{pct}%</span>
+                          </div>
+                          <div className="space-y-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className={eeat.author ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
+                                {eeat.author ? "✓" : "✗"}
+                              </span>
+                              <span className="text-slate-700">Forfatter: {eeat.author || "Mangler"}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={eeat.authorBio ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
+                                {eeat.authorBio ? "✓" : "✗"}
+                              </span>
+                              <span className="text-slate-700">Forfatterbiografi</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={eeat.expertise ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
+                                {eeat.expertise ? "✓" : "✗"}
+                              </span>
+                              <span className="text-slate-700">Ekspertise-signaler</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={eeat.trustworthiness ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
+                                {eeat.trustworthiness ? "✓" : "✗"}
+                              </span>
+                              <span className="text-slate-700">Troværdighed</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={eeat.aboutPage ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
+                                {eeat.aboutPage ? "✓" : "✗"}
+                              </span>
+                              <span className="text-slate-700">Om-side link</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={eeat.contactInfo ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
+                                {eeat.contactInfo ? "✓" : "✗"}
+                              </span>
+                              <span className="text-slate-700">Kontaktinformation</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {totalEeatPages > 1 && (
+                      <div className="mt-6 flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => setEeatPageNum(Math.max(1, eeatPageNum - 1))}
+                          disabled={eeatPageNum === 1}
+                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                        >
+                          ← Forrige
+                        </button>
+                        <span className="text-sm text-slate-600">
+                          Side {eeatPageNum} af {totalEeatPages} ({sortedEeat.length} sider med EEAT data totalt)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setEeatPageNum(Math.min(totalEeatPages, eeatPageNum + 1))}
+                          disabled={eeatPageNum === totalEeatPages}
+                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                        >
+                          Næste →
+                        </button>
+                      </div>
+                    )}
+                    {sortedEeat.length === 0 && (
+                      <p className="text-center text-slate-500">Ingen EEAT data tilgængelig.</p>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           )}
         </>

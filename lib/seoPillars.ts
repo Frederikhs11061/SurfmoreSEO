@@ -1,5 +1,5 @@
 /** SEO-piller: gruppering af audit-kategorier */
-export const SEO_PILLARS = ["Teknisk SEO", "On-page SEO", "Link building", "Off-page SEO"] as const;
+export const SEO_PILLARS = ["Teknisk SEO", "On-page SEO", "Link building"] as const;
 export type SEOPillar = (typeof SEO_PILLARS)[number];
 
 /** Map fra audit-kategori til pille */

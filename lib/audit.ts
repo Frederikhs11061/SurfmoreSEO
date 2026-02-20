@@ -205,14 +205,64 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
 
   // --- Links ---
   const links = $("a[href]");
-  const internal = links.filter((_, el) => {
+  const internalLinks: string[] = [];
+  const externalLinks: string[] = [];
+  const brokenLinks: string[] = [];
+  const linksEmptyHref: string[] = [];
+  
+  links.each((_, el) => {
     const href = $(el).attr("href") || "";
-    return href.startsWith("/") || href.startsWith(origin);
-  }).length;
-  const external = links.length - internal;
-  const linksEmptyHref = links.filter((_, el) => !$(el).attr("href")?.trim() || $(el).attr("href") === "#").length;
-  if (linksEmptyHref > 0) add(issues, "Links & canonical", "warning", "Links med tom eller # href", `${linksEmptyHref} stk.`, undefined, "Brug rigtige URLs eller button.", normalizeUrl);
-  add(issues, "Links & canonical", "pass", "Links", `${internal} interne, ${external} eksterne.`, undefined, undefined, normalizeUrl);
+    const text = $(el).text().trim() || $(el).attr("aria-label") || "";
+    
+    if (!href.trim() || href === "#" || href.startsWith("javascript:")) {
+      linksEmptyHref.push(href || "(tom)");
+      return;
+    }
+    
+    const isInternal = href.startsWith("/") || href.startsWith(origin) || (!href.startsWith("http") && !href.startsWith("mailto:") && !href.startsWith("tel:"));
+    const fullUrl = isInternal && !href.startsWith("http") ? new URL(href, origin).href : href;
+    
+    if (isInternal) {
+      internalLinks.push(fullUrl);
+    } else if (href.startsWith("http")) {
+      externalLinks.push(href);
+    }
+  });
+  
+  if (linksEmptyHref.length > 0) {
+    add(issues, "Links & canonical", "error", "Links med tom eller ugyldig href", `${linksEmptyHref.length} links med tom, # eller javascript: href.`, linksEmptyHref.slice(0, 5).join(", "), "Brug rigtige URLs eller button-elementer i stedet.", normalizeUrl);
+  }
+  
+  if (internalLinks.length === 0 && externalLinks.length === 0 && linksEmptyHref.length === 0) {
+    add(issues, "Links & canonical", "warning", "Ingen links fundet", "Siden har ingen links.", undefined, "Tilføj interne links til relaterede sider for bedre navigation.", normalizeUrl);
+  } else {
+    if (internalLinks.length === 0) {
+      add(issues, "Links & canonical", "warning", "Ingen interne links", "Siden mangler interne links.", undefined, "Tilføj interne links til relaterede sider.", normalizeUrl);
+    } else {
+      add(issues, "Links & canonical", "pass", "Interne links", `${internalLinks.length} interne links fundet.`, undefined, undefined, normalizeUrl);
+    }
+    
+    if (externalLinks.length === 0) {
+      add(issues, "Links & canonical", "warning", "Ingen eksterne links", "Ingen eksterne links til autoritative kilder.", undefined, "Overvej at tilføje eksterne links til relevante kilder.", normalizeUrl);
+    } else {
+      const externalWithoutRel: string[] = [];
+      links.each((i, el) => {
+        const href = $(el).attr("href");
+        if (href && href.startsWith("http") && !href.startsWith(origin)) {
+          const rel = $(el).attr("rel") || "";
+          if (!rel.includes("nofollow") && !rel.includes("noopener")) {
+            externalWithoutRel.push(href);
+          }
+        }
+      });
+      
+      if (externalWithoutRel.length > 0) {
+        add(issues, "Links & canonical", "warning", "Eksterne links mangler rel-attributter", `${externalWithoutRel.length} eksterne links mangler rel="noopener" eller rel="nofollow".`, externalLinks.slice(0, 3).join(", "), "Tilføj rel=\"noopener\" eller rel=\"nofollow\" til eksterne links.", normalizeUrl);
+      } else {
+        add(issues, "Links & canonical", "pass", "Eksterne links", `${externalLinks.length} eksterne links fundet.`, undefined, undefined, normalizeUrl);
+      }
+    }
+  }
 
   // --- Indholdslængde ---
   const bodyTextClean = $("body").text().replace(/\s+/g, " ").trim();
