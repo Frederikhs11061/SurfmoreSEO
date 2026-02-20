@@ -184,6 +184,88 @@ function isFullSiteResult(r: AuditResult | FullSiteResult): r is FullSiteResult 
   return "aggregated" in r && "pages" in r;
 }
 
+function ImageListComponent({ images }: { images: string }) {
+  const [showAll, setShowAll] = useState(false);
+  
+  const imageList = images.split(", ").filter(img => img.trim());
+  
+  // Fjern duplikater baseret på URL uden query params
+  const uniqueImages = new Map<string, string>();
+  imageList.forEach(img => {
+    try {
+      const url = new URL(img);
+      const baseUrl = `${url.origin}${url.pathname}`;
+      if (!uniqueImages.has(baseUrl)) {
+        uniqueImages.set(baseUrl, img); // Gem original URL med params
+      }
+    } catch {
+      // Hvis URL parsing fejler, brug original
+      if (!uniqueImages.has(img)) {
+        uniqueImages.set(img, img);
+      }
+    }
+  });
+  
+  const uniqueUrls = Array.from(uniqueImages.values());
+  const displayCount = showAll ? uniqueUrls.length : Math.min(5, uniqueUrls.length);
+  
+  return (
+    <div className="mt-1">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-medium text-slate-700">
+          {uniqueUrls.length} unikke billeder uden alt-tekst
+        </span>
+        {uniqueUrls.length > 5 && (
+          <button
+            onClick={() => setShowAll(!showAll)}
+            className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
+          >
+            {showAll ? "Vis færre" : `Vis alle (${uniqueUrls.length})`}
+          </button>
+        )}
+      </div>
+      <div className="max-h-48 overflow-y-auto">
+        <ul className="space-y-1">
+          {uniqueUrls.slice(0, displayCount).map((img, idx) => {
+            try {
+              const url = new URL(img);
+              const filename = url.pathname.split("/").pop() || url.pathname;
+              return (
+                <li key={idx} className="flex items-center gap-2">
+                  <span className="text-slate-400">•</span>
+                  <a
+                    href={img}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 hover:underline truncate max-w-[400px]"
+                    title={img}
+                  >
+                    {filename}
+                  </a>
+                </li>
+              );
+            } catch {
+              return (
+                <li key={idx} className="flex items-center gap-2">
+                  <span className="text-slate-400">•</span>
+                  <a
+                    href={img}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 hover:underline truncate max-w-[400px]"
+                  >
+                    {img.length > 50 ? `${img.substring(0, 50)}...` : img}
+                  </a>
+                </li>
+              );
+            }
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function SEOAuditPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -945,64 +1027,7 @@ function SEOAuditPageContent() {
                     {issue.value && (
                       <div className="mt-2 rounded bg-white/50 px-2 py-1.5 text-xs">
                         {issue.category === "Billeder" && issue.title.includes("alt-tekst") ? (
-                          <div>
-                            <span className="font-medium text-slate-700">Billeder uden alt-tekst:</span>
-                            {(() => {
-                              const images = issue.value.split(", ").filter(img => img.trim());
-                              const groupedByDomain = new Map<string, string[]>();
-                              
-                              images.forEach(img => {
-                                try {
-                                  const url = new URL(img);
-                                  const domain = url.origin;
-                                  if (!groupedByDomain.has(domain)) {
-                                    groupedByDomain.set(domain, []);
-                                  }
-                                  groupedByDomain.get(domain)!.push(img);
-                                } catch {
-                                  // Hvis URL parsing fejler, brug "Andre" gruppe
-                                  if (!groupedByDomain.has("Andre")) {
-                                    groupedByDomain.set("Andre", []);
-                                  }
-                                  groupedByDomain.get("Andre")!.push(img);
-                                }
-                              });
-                              
-                              const groups = Array.from(groupedByDomain.entries());
-                              
-                              return (
-                                <div className="mt-2 space-y-3 max-h-96 overflow-y-auto">
-                                  {groups.map(([domain, domainImages], groupIdx) => (
-                                    <div key={groupIdx} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                                      <div className="mb-1 flex items-center justify-between">
-                                        <span className="text-xs font-semibold text-slate-700">{domain}</span>
-                                        <span className="text-xs text-slate-500">{domainImages.length} billeder</span>
-                                      </div>
-                                      <ul className="ml-2 space-y-0.5 max-h-32 overflow-y-auto">
-                                        {domainImages.slice(0, 10).map((img, idx) => (
-                                          <li key={idx} className="break-all text-xs">
-                                            <a
-                                              href={img}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-blue-600 hover:text-blue-800 hover:underline"
-                                            >
-                                              {img.replace(domain, "")}
-                                            </a>
-                                          </li>
-                                        ))}
-                                        {domainImages.length > 10 && (
-                                          <li className="text-xs text-slate-500 italic">
-                                            ... og {domainImages.length - 10} flere
-                                          </li>
-                                        )}
-                                      </ul>
-                                    </div>
-                                  ))}
-                                </div>
-                              );
-                            })()}
-                          </div>
+                          <ImageListComponent images={issue.value} />
                         ) : (
                           <p className="break-all">{issue.value}</p>
                         )}
@@ -1068,56 +1093,7 @@ function SEOAuditPageContent() {
                     {selectedIssue.category === "Billeder" && selectedIssue.title.includes("alt-tekst") ? (
                       <div>
                         <span className="font-semibold text-slate-800">Billeder uden alt-tekst:</span>
-                        {(() => {
-                          const images = selectedIssue.value.split(", ").filter(img => img.trim());
-                          const groupedByDomain = new Map<string, string[]>();
-                          
-                          images.forEach(img => {
-                            try {
-                              const url = new URL(img);
-                              const domain = url.origin;
-                              if (!groupedByDomain.has(domain)) {
-                                groupedByDomain.set(domain, []);
-                              }
-                              groupedByDomain.get(domain)!.push(img);
-                            } catch {
-                              // Hvis URL parsing fejler, brug "Andre" gruppe
-                              if (!groupedByDomain.has("Andre")) {
-                                groupedByDomain.set("Andre", []);
-                              }
-                              groupedByDomain.get("Andre")!.push(img);
-                            }
-                          });
-                          
-                          const groups = Array.from(groupedByDomain.entries());
-                          
-                          return (
-                            <div className="mt-3 space-y-3 max-h-96 overflow-y-auto">
-                              {groups.map(([domain, domainImages], groupIdx) => (
-                                <div key={groupIdx} className="rounded-lg border border-slate-200 bg-white p-3">
-                                  <div className="mb-2 flex items-center justify-between">
-                                    <span className="text-sm font-semibold text-slate-700">{domain}</span>
-                                    <span className="text-xs text-slate-500">{domainImages.length} billeder</span>
-                                  </div>
-                                  <ul className="ml-2 space-y-1 max-h-48 overflow-y-auto">
-                                    {domainImages.map((img, idx) => (
-                                      <li key={idx} className="break-all text-xs">
-                                        <a
-                                          href={img}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="text-blue-600 hover:text-blue-800 hover:underline"
-                                        >
-                                          {img.replace(domain, "")}
-                                        </a>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              ))}
-                            </div>
-                          );
-                        })()}
+                        <ImageListComponent images={selectedIssue.value} />
                       </div>
                     ) : (
                       <>

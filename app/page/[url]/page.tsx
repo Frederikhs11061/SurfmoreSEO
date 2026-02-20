@@ -4,6 +4,88 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import type { AuditResult, AuditIssue, Severity } from "@/lib/audit";
 
+function ImageListComponent({ images }: { images: string }) {
+  const [showAll, setShowAll] = useState(false);
+  
+  const imageList = images.split(", ").filter(img => img.trim());
+  
+  // Fjern duplikater baseret på URL uden query params
+  const uniqueImages = new Map<string, string>();
+  imageList.forEach(img => {
+    try {
+      const url = new URL(img);
+      const baseUrl = `${url.origin}${url.pathname}`;
+      if (!uniqueImages.has(baseUrl)) {
+        uniqueImages.set(baseUrl, img); // Gem original URL med params
+      }
+    } catch {
+      // Hvis URL parsing fejler, brug original
+      if (!uniqueImages.has(img)) {
+        uniqueImages.set(img, img);
+      }
+    }
+  });
+  
+  const uniqueUrls = Array.from(uniqueImages.values());
+  const displayCount = showAll ? uniqueUrls.length : Math.min(5, uniqueUrls.length);
+  
+  return (
+    <div className="mt-1">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-medium text-slate-700">
+          {uniqueUrls.length} unikke billeder uden alt-tekst
+        </span>
+        {uniqueUrls.length > 5 && (
+          <button
+            onClick={() => setShowAll(!showAll)}
+            className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
+          >
+            {showAll ? "Vis færre" : `Vis alle (${uniqueUrls.length})`}
+          </button>
+        )}
+      </div>
+      <div className="max-h-48 overflow-y-auto">
+        <ul className="space-y-1">
+          {uniqueUrls.slice(0, displayCount).map((img, idx) => {
+            try {
+              const url = new URL(img);
+              const filename = url.pathname.split("/").pop() || url.pathname;
+              return (
+                <li key={idx} className="flex items-center gap-2">
+                  <span className="text-slate-400">•</span>
+                  <a
+                    href={img}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 hover:underline truncate max-w-[400px]"
+                    title={img}
+                  >
+                    {filename}
+                  </a>
+                </li>
+              );
+            } catch {
+              return (
+                <li key={idx} className="flex items-center gap-2">
+                  <span className="text-slate-400">•</span>
+                  <a
+                    href={img}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 hover:underline truncate max-w-[400px]"
+                  >
+                    {img.length > 50 ? `${img.substring(0, 50)}...` : img}
+                  </a>
+                </li>
+              );
+            }
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 const severityStyles: Record<Severity, string> = {
   error: "bg-gradient-to-br from-red-50 to-rose-50 text-red-900 border-2 border-red-200 shadow-sm",
   warning: "bg-gradient-to-br from-amber-50 to-orange-50 text-amber-900 border-2 border-amber-200 shadow-sm",
@@ -189,56 +271,7 @@ export default function PageDetail() {
                     {issue.category === "Billeder" && issue.title.includes("alt-tekst") ? (
                       <div>
                         <span className="font-medium text-slate-700">Billeder uden alt-tekst:</span>
-                        {(() => {
-                          const images = issue.value.split(", ").filter(img => img.trim());
-                          const groupedByDomain = new Map<string, string[]>();
-                          
-                          images.forEach(img => {
-                            try {
-                              const url = new URL(img);
-                              const domain = url.origin;
-                              if (!groupedByDomain.has(domain)) {
-                                groupedByDomain.set(domain, []);
-                              }
-                              groupedByDomain.get(domain)!.push(img);
-                            } catch {
-                              // Hvis URL parsing fejler, brug "Andre" gruppe
-                              if (!groupedByDomain.has("Andre")) {
-                                groupedByDomain.set("Andre", []);
-                              }
-                              groupedByDomain.get("Andre")!.push(img);
-                            }
-                          });
-                          
-                          const groups = Array.from(groupedByDomain.entries());
-                          
-                          return (
-                            <div className="mt-2 space-y-2 max-h-96 overflow-y-auto">
-                              {groups.map(([domain, domainImages], groupIdx) => (
-                                <div key={groupIdx} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                                  <div className="mb-1 flex items-center justify-between">
-                                    <span className="text-xs font-semibold text-slate-700">{domain}</span>
-                                    <span className="text-xs text-slate-500">{domainImages.length} billeder</span>
-                                  </div>
-                                  <ul className="ml-2 space-y-0.5 max-h-32 overflow-y-auto">
-                                    {domainImages.map((img, idx) => (
-                                      <li key={idx} className="break-all text-xs">
-                                        <a
-                                          href={img}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="text-blue-600 hover:text-blue-800 hover:underline"
-                                        >
-                                          {img.replace(domain, "")}
-                                        </a>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              ))}
-                            </div>
-                          );
-                        })()}
+                        <ImageListComponent images={issue.value} />
                       </div>
                     ) : (
                       <p className="break-all">{issue.value}</p>
