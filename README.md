@@ -21,3 +21,4 @@ npm run dev
 **Vigtigt:** Importer det eksisterende GitHub-repo. Opret ikke et nyt "Next.js"-projekt fra template – det er ikke samme ting.
 
 Projektet er bygget med **Next.js 14** (App Router).
+
