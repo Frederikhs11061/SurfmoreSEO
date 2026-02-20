@@ -7,7 +7,7 @@ import {
 } from "./audit";
 import { buildSuggestionsFromAggregated } from "./suggestions";
 
-const BATCH_SIZE = 50; // Øget fra 25 for hurtigere audit
+const BATCH_SIZE = 100; // Maksimal batch-størrelse for hurtigst mulig audit
 
 function buildSuggestions(
   aggregated: AuditIssue[],

@@ -7,8 +7,8 @@ import type { AuditResult, AuditIssue, Severity, FullSiteResult, ImprovementSugg
 import { buildSuggestionsFromAggregated } from "@/lib/suggestions";
 import { getPillarForCategory, SEO_PILLARS, type SEOPillar } from "@/lib/seoPillars";
 
-const BATCH_SIZE = 50; // Øget fra 25 for hurtigere audit
-const CONCURRENT_BATCHES = 5; // Kør 5 batches parallelt
+const BATCH_SIZE = 100; // Maksimal batch-størrelse for hurtigst mulig audit
+const CONCURRENT_BATCHES = 15; // Kør 15 batches parallelt for maksimal hastighed
 
 function mergeBatchResults(
   batches: FullSiteResult[],
