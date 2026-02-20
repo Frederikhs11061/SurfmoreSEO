@@ -49,6 +49,15 @@ export interface FullSiteResult {
   pagesAudited: number;
   totalUrlsInSitemap: number;
   improvementSuggestions: ImprovementSuggestion[];
+  eeat?: {
+    author?: string;
+    authorBio?: boolean;
+    expertise?: boolean;
+    trustworthiness?: boolean;
+    aboutPage?: boolean;
+    contactInfo?: boolean;
+    score?: number;
+  };
 }
 
 function add(
@@ -203,16 +212,19 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   if (totalImgs > 0 && imgsWithoutDimensions === totalImgs) add(issues, "Billeder", "warning", "Billeder uden mål", "Width/height kan reducere CLS.", undefined, "Overvej width/height på img.", normalizeUrl);
   else if (totalImgs > 0 && imgsWithoutDimensions > 0) add(issues, "Billeder", "pass", "Billedmål", `${totalImgs - imgsWithoutDimensions} med mål.`, undefined, undefined, normalizeUrl);
 
-  // --- Links ---
+  // --- Links (udvidet analyse) ---
   const links = $("a[href]");
-  const internalLinks: string[] = [];
+  const internalLinks: Array<{ url: string; anchorText: string; hasNoFollow: boolean; isImageLink: boolean }> = [];
   const externalLinks: string[] = [];
-  const brokenLinks: string[] = [];
   const linksEmptyHref: string[] = [];
+  const linksWithoutAnchorText: string[] = [];
+  const duplicateInternalLinks = new Map<string, number>();
   
   links.each((_, el) => {
     const href = $(el).attr("href") || "";
     const text = $(el).text().trim() || $(el).attr("aria-label") || "";
+    const rel = $(el).attr("rel") || "";
+    const isImageLink = $(el).find("img").length > 0;
     
     if (!href.trim() || href === "#" || href.startsWith("javascript:")) {
       linksEmptyHref.push(href || "(tom)");
@@ -223,12 +235,26 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
     const fullUrl = isInternal && !href.startsWith("http") ? new URL(href, origin).href : href;
     
     if (isInternal) {
-      internalLinks.push(fullUrl);
+      // Normaliser URL (fjern hash og query params for at tælle duplicates)
+      const normalizedUrl = fullUrl.split("#")[0].split("?")[0];
+      duplicateInternalLinks.set(normalizedUrl, (duplicateInternalLinks.get(normalizedUrl) || 0) + 1);
+      
+      internalLinks.push({
+        url: fullUrl,
+        anchorText: text || (isImageLink ? ($(el).find("img").attr("alt") || "Billede-link") : "Ingen tekst"),
+        hasNoFollow: rel.includes("nofollow"),
+        isImageLink,
+      });
+      
+      if (!text && !isImageLink) {
+        linksWithoutAnchorText.push(fullUrl);
+      }
     } else if (href.startsWith("http")) {
       externalLinks.push(href);
     }
   });
   
+  // Analyse interne links
   if (linksEmptyHref.length > 0) {
     add(issues, "Links & canonical", "error", "Links med tom eller ugyldig href", `${linksEmptyHref.length} links med tom, # eller javascript: href.`, linksEmptyHref.slice(0, 5).join(", "), "Brug rigtige URLs eller button-elementer i stedet.", normalizeUrl);
   }
@@ -236,12 +262,42 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   if (internalLinks.length === 0 && externalLinks.length === 0 && linksEmptyHref.length === 0) {
     add(issues, "Links & canonical", "warning", "Ingen links fundet", "Siden har ingen links.", undefined, "Tilføj interne links til relaterede sider for bedre navigation.", normalizeUrl);
   } else {
+    // Interne links analyse
     if (internalLinks.length === 0) {
       add(issues, "Links & canonical", "warning", "Ingen interne links", "Siden mangler interne links.", undefined, "Tilføj interne links til relaterede sider.", normalizeUrl);
     } else {
-      add(issues, "Links & canonical", "pass", "Interne links", `${internalLinks.length} interne links fundet.`, undefined, undefined, normalizeUrl);
+      const uniqueInternalLinks = new Set(internalLinks.map(l => l.url.split("#")[0].split("?")[0])).size;
+      const duplicateCount = Array.from(duplicateInternalLinks.values()).filter(count => count > 1).length;
+      const noFollowCount = internalLinks.filter(l => l.hasNoFollow).length;
+      const imageLinksCount = internalLinks.filter(l => l.isImageLink).length;
+      
+      let internalLinkMessage = `${internalLinks.length} interne links fundet (${uniqueInternalLinks} unikke URLs)`;
+      if (duplicateCount > 0) {
+        internalLinkMessage += `. ${duplicateCount} URLs gentages flere gange.`;
+      }
+      if (noFollowCount > 0) {
+        internalLinkMessage += ` ${noFollowCount} med rel="nofollow".`;
+      }
+      if (imageLinksCount > 0) {
+        internalLinkMessage += ` ${imageLinksCount} billedlinks.`;
+      }
+      
+      add(issues, "Links & canonical", "pass", "Interne links", internalLinkMessage, undefined, undefined, normalizeUrl);
+      
+      if (linksWithoutAnchorText.length > 0) {
+        add(issues, "Links & canonical", "warning", "Interne links uden anchor tekst", `${linksWithoutAnchorText.length} interne links mangler beskrivende tekst.`, linksWithoutAnchorText.slice(0, 5).join(", "), "Tilføj beskrivende tekst til links for bedre accessibility og SEO.", normalizeUrl);
+      }
+      
+      if (duplicateCount > 5) {
+        add(issues, "Links & canonical", "warning", "Mange duplikerede interne links", `${duplicateCount} interne URLs gentages flere gange på samme side.`, undefined, "Overvej at reducere antallet af links til samme URL på samme side.", normalizeUrl);
+      }
+      
+      if (noFollowCount > 0 && noFollowCount === internalLinks.length) {
+        add(issues, "Links & canonical", "warning", "Alle interne links har nofollow", "Alle interne links har rel=\"nofollow\", hvilket forhindrer link juice.", undefined, "Fjern nofollow fra interne links medmindre det er nødvendigt.", normalizeUrl);
+      }
     }
     
+    // Eksterne links analyse
     if (externalLinks.length === 0) {
       add(issues, "Links & canonical", "warning", "Ingen eksterne links", "Ingen eksterne links til autoritative kilder.", undefined, "Overvej at tilføje eksterne links til relevante kilder.", normalizeUrl);
     } else {
@@ -306,7 +362,8 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   if (!normalizeUrl.startsWith("https://")) add(issues, "Sikkerhed", "error", "Ikke HTTPS", "Siden bruger ikke HTTPS.", undefined, "Aktiver SSL/HTTPS.", normalizeUrl);
   else add(issues, "Sikkerhed", "pass", "HTTPS", "Aktiveret.", undefined, undefined, normalizeUrl);
 
-  // --- EEAT (Experience, Expertise, Authoritativeness, Trustworthiness) ---
+  // --- EEAT (samles overordnet i fullAudit, ikke per side) ---
+  // Vi samler kun data her, men evaluerer ikke per side
   const bodyText = $("body").text().toLowerCase();
   const author = $('meta[name="author"], [rel="author"], .author, [itemprop="author"]').first().text().trim() || 
                  $('meta[property="article:author"]').attr("content") || "";
@@ -318,6 +375,7 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   const hasAboutPage = $('a[href*="/om"], a[href*="/about"], a[href*="/om-os"]').length > 0;
   const hasContactInfo = $('a[href*="mailto:"], a[href*="tel:"], [itemtype*="ContactPoint"]').length > 0;
 
+  // Gem EEAT data per side (bruges til aggregering)
   const eeat = {
     author: author || undefined,
     authorBio: hasAuthorBio,
@@ -326,19 +384,6 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
     aboutPage: hasAboutPage,
     contactInfo: hasContactInfo,
   };
-
-  // EEAT issues
-  if (!author) add(issues, "EEAT", "warning", "Ingen forfatter angivet", "Manglende author meta eller rel=author.", undefined, "Tilføj forfatterinformation for bedre EEAT.", normalizeUrl);
-  else add(issues, "EEAT", "pass", "Forfatter angivet", author.slice(0, 50), undefined, undefined, normalizeUrl);
-  
-  if (!hasAuthorBio) add(issues, "EEAT", "warning", "Ingen forfatterbiografi", "Manglende information om forfatteren.", undefined, "Tilføj forfatterbiografi eller 'Om mig' sektion.", normalizeUrl);
-  else add(issues, "EEAT", "pass", "Forfatterbiografi", "Fundet", undefined, undefined, normalizeUrl);
-  
-  if (!hasExpertise) add(issues, "EEAT", "warning", "Begrænset ekspertise-signaler", "Manglende tegn på ekspertise.", undefined, "Tilføj information om ekspertise, kvalifikationer eller erfaring.", normalizeUrl);
-  else add(issues, "EEAT", "pass", "Ekspertise-signaler", "Fundet", undefined, undefined, normalizeUrl);
-  
-  if (!hasTrustworthiness && !hasContactInfo) add(issues, "EEAT", "warning", "Begrænset troværdighed", "Manglende kontaktinformation.", undefined, "Tilføj kontaktinformation, adresse eller CVR-nr.", normalizeUrl);
-  else add(issues, "EEAT", "pass", "Troværdighed", "Kontaktinfo fundet", undefined, undefined, normalizeUrl);
 
   // --- Kategorier & score ---
   for (const i of issues) {

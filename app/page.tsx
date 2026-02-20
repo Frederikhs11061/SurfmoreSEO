@@ -48,6 +48,45 @@ function mergeBatchResults(
   const passed = aggregated.filter((i) => i.severity === "pass").length;
   const overallScore = total > 0 ? Math.round((passed / total) * 100) : 0;
   const improvementSuggestions = buildSuggestionsFromAggregated(aggregated);
+  
+  // Aggreger EEAT overordnet (over hele sitet)
+  const allEeatData = pages.map(p => p.eeat).filter((e): e is NonNullable<typeof e> => e !== undefined);
+  let aggregatedEeat: FullSiteResult["eeat"] | undefined;
+  if (allEeatData.length > 0) {
+    // Tjek om sitet overordnet har EEAT-signaler
+    const hasAuthor = allEeatData.some(e => e.author);
+    const hasAuthorBio = allEeatData.some(e => e.authorBio);
+    const hasExpertise = allEeatData.some(e => e.expertise);
+    const hasTrustworthiness = allEeatData.some(e => e.trustworthiness);
+    const hasAboutPage = allEeatData.some(e => e.aboutPage);
+    const hasContactInfo = allEeatData.some(e => e.contactInfo);
+    
+    // Find mest almindelige forfatter
+    const authors = allEeatData.map(e => e.author).filter((a): a is string => !!a);
+    const authorCounts = new Map<string, number>();
+    authors.forEach(a => authorCounts.set(a, (authorCounts.get(a) || 0) + 1));
+    const mostCommonAuthor = Array.from(authorCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+    
+    const eeatScore = [
+      hasAuthor ? 1 : 0,
+      hasAuthorBio ? 1 : 0,
+      hasExpertise ? 1 : 0,
+      hasTrustworthiness ? 1 : 0,
+      hasAboutPage ? 1 : 0,
+      hasContactInfo ? 1 : 0,
+    ].reduce((a, b) => a + b, 0);
+    
+    aggregatedEeat = {
+      author: mostCommonAuthor,
+      authorBio: hasAuthorBio,
+      expertise: hasExpertise,
+      trustworthiness: hasTrustworthiness,
+      aboutPage: hasAboutPage,
+      contactInfo: hasContactInfo,
+      score: Math.round((eeatScore / 6) * 100),
+    };
+  }
+  
   return {
     origin,
     pages,
@@ -57,6 +96,7 @@ function mergeBatchResults(
     pagesAudited: pages.length,
     totalUrlsInSitemap,
     improvementSuggestions,
+    eeat: aggregatedEeat,
   };
 }
 
@@ -93,12 +133,10 @@ function SEOAuditPageContent() {
   const [pageNum, setPageNum] = useState(1);
   const [suggestionsPageNum, setSuggestionsPageNum] = useState(1);
   const [overviewPageNum, setOverviewPageNum] = useState(1);
-  const [eeatPageNum, setEeatPageNum] = useState(1);
   const ITEMS_PER_PAGE = 25;
   const [selectedIssue, setSelectedIssue] = useState<AuditIssue | null>(null);
   const [issueSearchQuery, setIssueSearchQuery] = useState("");
   const [issueSortBy, setIssueSortBy] = useState<"severity" | "category" | "title" | "pages">("severity");
-  const [eeatSortBy, setEeatSortBy] = useState<"score" | "url" | "author">("score");
 
   useEffect(() => {
     const pillar = searchParams.get("pillar");
@@ -1034,141 +1072,138 @@ function SEOAuditPageContent() {
           )}
 
           {tab === "eeat" && full && (
-            <div className="mt-6 space-y-4">
-              <h2 className="text-lg font-semibold text-slate-800">EEAT Oversigt (Experience, Expertise, Authoritativeness, Trustworthiness)</h2>
-              <p className="text-sm text-slate-600">
-                EEAT er Googles retningslinjer for kvalitetsindhold. Her er en oversigt over hvor godt sitet opfylder EEAT-kriterierne.
-              </p>
-              <div className="mb-4 flex items-center gap-3">
-                <label className="flex items-center gap-2 text-sm text-slate-600">
-                  Sorter efter:
-                  <select
-                    value={eeatSortBy}
-                    onChange={(e) => setEeatSortBy(e.target.value as typeof eeatSortBy)}
-                    className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                  >
-                    <option value="score">Score (højeste først)</option>
-                    <option value="url">URL (alfabetisk)</option>
-                    <option value="author">Forfatter</option>
-                  </select>
-                </label>
+            <div className="mt-6 space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">EEAT Overordnet Vurdering</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  EEAT (Experience, Expertise, Authoritativeness, Trustworthiness) er Googles retningslinjer for kvalitetsindhold. 
+                  Her er en overordnet vurdering af hvor autentisk og troværdigt dit site er som helhed.
+                </p>
               </div>
-              {(() => {
-                const pagesWithEeat = full.pages
-                  .map((page) => {
-                    const eeat = page.eeat;
-                    if (!eeat) return null;
-                    const score = [
-                      eeat.author ? 1 : 0,
-                      eeat.authorBio ? 1 : 0,
-                      eeat.expertise ? 1 : 0,
-                      eeat.trustworthiness ? 1 : 0,
-                      eeat.aboutPage ? 1 : 0,
-                      eeat.contactInfo ? 1 : 0,
-                    ].reduce((a, b) => a + b, 0);
-                    const maxScore = 6;
-                    const pct = Math.round((score / maxScore) * 100);
-                    return { page, eeat, score, pct };
-                  })
-                  .filter((p): p is NonNullable<typeof p> => p !== null);
-                
-                const sortedEeat = [...pagesWithEeat].sort((a, b) => {
-                  if (eeatSortBy === "score") return b.score - a.score;
-                  if (eeatSortBy === "url") return a.page.url.localeCompare(b.page.url);
-                  if (eeatSortBy === "author") {
-                    const aAuthor = a.eeat.author || "";
-                    const bAuthor = b.eeat.author || "";
-                    return aAuthor.localeCompare(bAuthor) || a.page.url.localeCompare(b.page.url);
-                  }
-                  return 0;
-                });
-                
-                const totalEeatPages = Math.ceil(sortedEeat.length / ITEMS_PER_PAGE);
-                const eeatStartIdx = (eeatPageNum - 1) * ITEMS_PER_PAGE;
-                const eeatEndIdx = eeatStartIdx + ITEMS_PER_PAGE;
-                const paginatedEeat = sortedEeat.slice(eeatStartIdx, eeatEndIdx);
-                
-                return (
-                  <>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      {paginatedEeat.map(({ page, eeat, score, pct }) => (
-                        <div key={page.url} className="rounded-xl border-2 border-slate-200 bg-white p-5 shadow-sm">
-                          <div className="mb-3 flex items-center justify-between">
-                            <Link href={`/page/${encodeURIComponent(page.url)}`} className="truncate text-sm font-semibold text-sky-600 hover:underline">
-                              {page.url}
-                            </Link>
-                            <span className="text-lg font-bold text-slate-800">{pct}%</span>
-                          </div>
-                          <div className="space-y-2 text-xs">
-                            <div className="flex items-center gap-2">
-                              <span className={eeat.author ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
-                                {eeat.author ? "✓" : "✗"}
-                              </span>
-                              <span className="text-slate-700">Forfatter: {eeat.author || "Mangler"}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={eeat.authorBio ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
-                                {eeat.authorBio ? "✓" : "✗"}
-                              </span>
-                              <span className="text-slate-700">Forfatterbiografi</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={eeat.expertise ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
-                                {eeat.expertise ? "✓" : "✗"}
-                              </span>
-                              <span className="text-slate-700">Ekspertise-signaler</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={eeat.trustworthiness ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
-                                {eeat.trustworthiness ? "✓" : "✗"}
-                              </span>
-                              <span className="text-slate-700">Troværdighed</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={eeat.aboutPage ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
-                                {eeat.aboutPage ? "✓" : "✗"}
-                              </span>
-                              <span className="text-slate-700">Om-side link</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={eeat.contactInfo ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
-                                {eeat.contactInfo ? "✓" : "✗"}
-                              </span>
-                              <span className="text-slate-700">Kontaktinformation</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+              
+              {full.eeat ? (
+                <>
+                  <div className="rounded-2xl bg-gradient-to-r from-sky-600 via-blue-600 to-cyan-600 p-8 text-white shadow-xl">
+                    <div className="mb-4 flex items-center justify-between">
+                      <h3 className="text-xl font-bold">EEAT Score</h3>
+                      <span className="text-4xl font-bold">{full.eeat.score ?? 0}%</span>
                     </div>
-                    {totalEeatPages > 1 && (
-                      <div className="mt-6 flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={() => setEeatPageNum(Math.max(1, eeatPageNum - 1))}
-                          disabled={eeatPageNum === 1}
-                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
-                        >
-                          ← Forrige
-                        </button>
-                        <span className="text-sm text-slate-600">
-                          Side {eeatPageNum} af {totalEeatPages} ({sortedEeat.length} sider med EEAT data totalt)
+                    <p className="text-blue-100">
+                      Din hjemmeside opfylder {full.eeat.score ?? 0}% af EEAT-kriterierne overordnet.
+                    </p>
+                  </div>
+                  
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className={`rounded-xl border-2 p-6 ${full.eeat.author ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={`text-2xl font-bold ${full.eeat.author ? "text-green-600" : "text-red-600"}`}>
+                          {full.eeat.author ? "✓" : "✗"}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => setEeatPageNum(Math.min(totalEeatPages, eeatPageNum + 1))}
-                          disabled={eeatPageNum === totalEeatPages}
-                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
-                        >
-                          Næste →
-                        </button>
+                        <h4 className="text-lg font-semibold text-slate-800">Forfatter</h4>
                       </div>
-                    )}
-                    {sortedEeat.length === 0 && (
-                      <p className="text-center text-slate-500">Ingen EEAT data tilgængelig.</p>
-                    )}
-                  </>
-                );
-              })()}
+                      <p className="text-sm text-slate-600">
+                        {full.eeat.author ? `Forfatter identificeret: ${full.eeat.author}` : "Ingen forfatter angivet på sitet."}
+                      </p>
+                      {!full.eeat.author && (
+                        <p className="mt-2 text-xs text-red-700">
+                          Anbefaling: Tilføj forfatterinformation via meta tags eller rel=&quot;author&quot; links.
+                        </p>
+                      )}
+                    </div>
+                    
+                    <div className={`rounded-xl border-2 p-6 ${full.eeat.authorBio ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={`text-2xl font-bold ${full.eeat.authorBio ? "text-green-600" : "text-red-600"}`}>
+                          {full.eeat.authorBio ? "✓" : "✗"}
+                        </span>
+                        <h4 className="text-lg font-semibold text-slate-800">Forfatterbiografi</h4>
+                      </div>
+                      <p className="text-sm text-slate-600">
+                        {full.eeat.authorBio ? "Forfatterbiografi eller &apos;Om mig&apos; sektion fundet på sitet." : "Ingen forfatterbiografi fundet."}
+                      </p>
+                      {!full.eeat.authorBio && (
+                        <p className="mt-2 text-xs text-red-700">
+                          Anbefaling: Tilføj information om forfatteren eller organisationen bag sitet.
+                        </p>
+                      )}
+                    </div>
+                    
+                    <div className={`rounded-xl border-2 p-6 ${full.eeat.expertise ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={`text-2xl font-bold ${full.eeat.expertise ? "text-green-600" : "text-red-600"}`}>
+                          {full.eeat.expertise ? "✓" : "✗"}
+                        </span>
+                        <h4 className="text-lg font-semibold text-slate-800">Ekspertise</h4>
+                      </div>
+                      <p className="text-sm text-slate-600">
+                        {full.eeat.expertise ? "Ekspertise-signaler fundet på sitet." : "Begrænsede tegn på ekspertise."}
+                      </p>
+                      {!full.eeat.expertise && (
+                        <p className="mt-2 text-xs text-red-700">
+                          Anbefaling: Vis kvalifikationer, erfaring eller ekspertise inden for dit område.
+                        </p>
+                      )}
+                    </div>
+                    
+                    <div className={`rounded-xl border-2 p-6 ${full.eeat.trustworthiness ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={`text-2xl font-bold ${full.eeat.trustworthiness ? "text-green-600" : "text-red-600"}`}>
+                          {full.eeat.trustworthiness ? "✓" : "✗"}
+                        </span>
+                        <h4 className="text-lg font-semibold text-slate-800">Troværdighed</h4>
+                      </div>
+                      <p className="text-sm text-slate-600">
+                        {full.eeat.trustworthiness ? "Troværdighedssignaler fundet (kontaktinfo, adresse, CVR-nr)." : "Begrænsede troværdighedssignaler."}
+                      </p>
+                      {!full.eeat.trustworthiness && (
+                        <p className="mt-2 text-xs text-red-700">
+                          Anbefaling: Tilføj kontaktinformation, fysisk adresse eller CVR-nummer.
+                        </p>
+                      )}
+                    </div>
+                    
+                    <div className={`rounded-xl border-2 p-6 ${full.eeat.aboutPage ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={`text-2xl font-bold ${full.eeat.aboutPage ? "text-green-600" : "text-red-600"}`}>
+                          {full.eeat.aboutPage ? "✓" : "✗"}
+                        </span>
+                        <h4 className="text-lg font-semibold text-slate-800">Om-side</h4>
+                      </div>
+                      <p className="text-sm text-slate-600">
+                        {full.eeat.aboutPage ? "Link til &apos;Om os&apos; eller lignende side fundet." : "Ingen &apos;Om os&apos; side identificeret."}
+                      </p>
+                      {!full.eeat.aboutPage && (
+                        <p className="mt-2 text-xs text-red-700">
+                          Anbefaling: Opret en &apos;Om os&apos; side der fortæller om organisationen bag sitet.
+                        </p>
+                      )}
+                    </div>
+                    
+                    <div className={`rounded-xl border-2 p-6 ${full.eeat.contactInfo ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={`text-2xl font-bold ${full.eeat.contactInfo ? "text-green-600" : "text-red-600"}`}>
+                          {full.eeat.contactInfo ? "✓" : "✗"}
+                        </span>
+                        <h4 className="text-lg font-semibold text-slate-800">Kontaktinformation</h4>
+                      </div>
+                      <p className="text-sm text-slate-600">
+                        {full.eeat.contactInfo ? "Kontaktinformation (email, telefon) fundet på sitet." : "Ingen kontaktinformation fundet."}
+                      </p>
+                      {!full.eeat.contactInfo && (
+                        <p className="mt-2 text-xs text-red-700">
+                          Anbefaling: Tilføj email, telefon eller kontaktformular på sitet.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-lg border-2 border-amber-200 bg-amber-50 p-6">
+                  <p className="text-amber-800">
+                    Ingen EEAT-data tilgængelig. Kør en fuld site-audit for at få en EEAT-vurdering.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </>

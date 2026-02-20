@@ -72,6 +72,42 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
   const overallScore = total > 0 ? Math.round((passed / total) * 100) : 0;
 
   const improvementSuggestions = buildSuggestions(aggregated, byKey);
+  
+  // Aggreger EEAT overordnet (over hele sitet)
+  const allEeatData = pages.map(p => p.eeat).filter((e): e is NonNullable<typeof e> => e !== undefined);
+  let aggregatedEeat: FullSiteResult["eeat"] | undefined;
+  if (allEeatData.length > 0) {
+    const hasAuthor = allEeatData.some(e => e.author);
+    const hasAuthorBio = allEeatData.some(e => e.authorBio);
+    const hasExpertise = allEeatData.some(e => e.expertise);
+    const hasTrustworthiness = allEeatData.some(e => e.trustworthiness);
+    const hasAboutPage = allEeatData.some(e => e.aboutPage);
+    const hasContactInfo = allEeatData.some(e => e.contactInfo);
+    
+    const authors = allEeatData.map(e => e.author).filter((a): a is string => !!a);
+    const authorCounts = new Map<string, number>();
+    authors.forEach(a => authorCounts.set(a, (authorCounts.get(a) || 0) + 1));
+    const mostCommonAuthor = Array.from(authorCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+    
+    const eeatScore = [
+      hasAuthor ? 1 : 0,
+      hasAuthorBio ? 1 : 0,
+      hasExpertise ? 1 : 0,
+      hasTrustworthiness ? 1 : 0,
+      hasAboutPage ? 1 : 0,
+      hasContactInfo ? 1 : 0,
+    ].reduce((a, b) => a + b, 0);
+    
+    aggregatedEeat = {
+      author: mostCommonAuthor,
+      authorBio: hasAuthorBio,
+      expertise: hasExpertise,
+      trustworthiness: hasTrustworthiness,
+      aboutPage: hasAboutPage,
+      contactInfo: hasContactInfo,
+      score: Math.round((eeatScore / 6) * 100),
+    };
+  }
 
   return {
     origin,
@@ -82,6 +118,7 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
     pagesAudited: pages.length,
     totalUrlsInSitemap: totalInSitemap,
     improvementSuggestions,
+    eeat: aggregatedEeat,
   };
 }
 
@@ -135,6 +172,42 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
   const passed = aggregated.filter((i) => i.severity === "pass").length;
   const overallScore = total > 0 ? Math.round((passed / total) * 100) : 0;
   const improvementSuggestions = buildSuggestions(aggregated, byKey);
+  
+  // Aggreger EEAT overordnet (over hele sitet)
+  const allEeatData = pages.map(p => p.eeat).filter((e): e is NonNullable<typeof e> => e !== undefined);
+  let aggregatedEeat: FullSiteResult["eeat"] | undefined;
+  if (allEeatData.length > 0) {
+    const hasAuthor = allEeatData.some(e => e.author);
+    const hasAuthorBio = allEeatData.some(e => e.authorBio);
+    const hasExpertise = allEeatData.some(e => e.expertise);
+    const hasTrustworthiness = allEeatData.some(e => e.trustworthiness);
+    const hasAboutPage = allEeatData.some(e => e.aboutPage);
+    const hasContactInfo = allEeatData.some(e => e.contactInfo);
+    
+    const authors = allEeatData.map(e => e.author).filter((a): a is string => !!a);
+    const authorCounts = new Map<string, number>();
+    authors.forEach(a => authorCounts.set(a, (authorCounts.get(a) || 0) + 1));
+    const mostCommonAuthor = Array.from(authorCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+    
+    const eeatScore = [
+      hasAuthor ? 1 : 0,
+      hasAuthorBio ? 1 : 0,
+      hasExpertise ? 1 : 0,
+      hasTrustworthiness ? 1 : 0,
+      hasAboutPage ? 1 : 0,
+      hasContactInfo ? 1 : 0,
+    ].reduce((a, b) => a + b, 0);
+    
+    aggregatedEeat = {
+      author: mostCommonAuthor,
+      authorBio: hasAuthorBio,
+      expertise: hasExpertise,
+      trustworthiness: hasTrustworthiness,
+      aboutPage: hasAboutPage,
+      contactInfo: hasContactInfo,
+      score: Math.round((eeatScore / 6) * 100),
+    };
+  }
 
   return {
     origin,
@@ -145,5 +218,6 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
     pagesAudited: pages.length,
     totalUrlsInSitemap: toAudit.length,
     improvementSuggestions,
+    eeat: aggregatedEeat,
   };
 }
