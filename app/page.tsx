@@ -61,9 +61,9 @@ function mergeBatchResults(
 }
 
 const severityStyles: Record<Severity, string> = {
-  error: "bg-red-100 text-red-800 border-red-200",
-  warning: "bg-amber-100 text-amber-800 border-amber-200",
-  pass: "bg-green-100 text-green-800 border-green-200",
+  error: "bg-gradient-to-br from-red-50 to-rose-50 text-red-900 border-2 border-red-200 shadow-sm",
+  warning: "bg-gradient-to-br from-amber-50 to-orange-50 text-amber-900 border-2 border-amber-200 shadow-sm",
+  pass: "bg-gradient-to-br from-emerald-50 to-green-50 text-green-900 border-2 border-green-200 shadow-sm",
 };
 
 const severityLabels: Record<Severity, string> = {
@@ -352,72 +352,88 @@ function SEOAuditPageContent() {
   const suggestionsToShow = pillarFilter === "all" ? (full?.improvementSuggestions ?? []) : suggestionsFilteredByPillar;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="text-2xl font-bold text-slate-800 md:text-3xl">
-        SEO Audit – hele sitet
-      </h1>
-      <p className="mt-1 text-slate-600">
-        Tjek forsiden eller hele sitet via sitemap. Titel, meta, overskrifter, billeder, mobil, social, crawl m.m.
-      </p>
+    <div className="mx-auto max-w-6xl px-4 py-8">
+      <div className="mb-8 rounded-2xl bg-gradient-to-r from-sky-600 via-blue-600 to-cyan-600 p-8 text-white shadow-xl">
+        <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
+            <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold md:text-4xl">
+              SEO Audit Tool
+            </h1>
+            <p className="mt-1 text-blue-100">
+              Analyser hele dit site – titel, meta, overskrifter, billeder, mobil, social, crawl og meget mere
+            </p>
+          </div>
+        </div>
+      </div>
 
-      <div className="mt-6 flex flex-wrap items-end gap-4">
-        <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-slate-700">URL / domæne</span>
-          <input
-            type="text"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="surfmore.dk"
-            className="w-64 rounded-lg border border-slate-300 px-4 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={fullSite}
-            onChange={(e) => setFullSite(e.target.checked)}
-            className="rounded border-slate-300"
-          />
-          <span className="text-sm text-slate-700">Hele sitet (crawler sitemap, auditerer alle sider i batches)</span>
-        </label>
-        <button
-          type="button"
-          onClick={run}
-          disabled={loading}
-          className="rounded-lg bg-slate-800 px-5 py-2.5 font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
-          {loading ? (progress || (fullSite ? "Henter sitemap…" : "Kører audit…")) : "Kør audit"}
-        </button>
+      <div className="mb-8 rounded-xl bg-white p-6 shadow-lg">
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-sm font-semibold text-slate-700">URL / domæne</span>
+            <input
+              type="text"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="surfmore.dk"
+              className="w-64 rounded-lg border-2 border-slate-200 px-4 py-2.5 transition focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
+            />
+          </label>
+          <label className="flex items-center gap-2 rounded-lg border-2 border-slate-200 px-4 py-2.5 transition hover:border-sky-300">
+            <input
+              type="checkbox"
+              checked={fullSite}
+              onChange={(e) => setFullSite(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-2 focus:ring-sky-500"
+            />
+            <span className="text-sm font-medium text-slate-700">Hele sitet (crawler sitemap, auditerer alle sider i batches)</span>
+          </label>
+          <button
+            type="button"
+            onClick={run}
+            disabled={loading}
+            className="rounded-lg bg-gradient-to-r from-sky-600 to-blue-600 px-6 py-2.5 font-semibold text-white shadow-md transition hover:from-sky-700 hover:to-blue-700 hover:shadow-lg disabled:opacity-50 disabled:hover:shadow-md"
+          >
+            {loading ? (progress || (fullSite ? "Henter sitemap…" : "Kører audit…")) : "🚀 Kør audit"}
+          </button>
+        </div>
       </div>
 
       {loading && progress && (
-        <p className="mt-2 text-sm text-slate-600">{progress}</p>
+        <div className="mb-4 rounded-lg bg-blue-50 border-2 border-blue-200 p-4">
+          <p className="text-sm font-medium text-blue-800">{progress}</p>
+        </div>
       )}
 
       {error && (
-        <div className="mt-4 rounded-lg bg-red-50 p-4 text-red-700">
-          {error}
+        <div className="mb-4 rounded-lg bg-red-50 border-2 border-red-200 p-4 text-red-800">
+          <p className="font-semibold">⚠️ Fejl</p>
+          <p className="mt-1 text-sm">{error}</p>
         </div>
       )}
 
       {result && (
         <>
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div className="rounded-xl bg-white p-4 shadow-sm">
-              <div className="text-2xl font-bold text-slate-800">{score}%</div>
-              <div className="text-sm text-slate-500">Score</div>
+            <div className="rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 p-6 text-white shadow-lg">
+              <div className="text-3xl font-bold">{score}%</div>
+              <div className="mt-1 text-sm font-medium text-blue-100">Score</div>
             </div>
-            <div className="rounded-xl bg-white p-4 shadow-sm">
-              <div className="text-2xl font-bold text-green-600">{passed}</div>
-              <div className="text-sm text-slate-500">OK</div>
+            <div className="rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 p-6 text-white shadow-lg">
+              <div className="text-3xl font-bold">{passed}</div>
+              <div className="mt-1 text-sm font-medium text-green-100">OK</div>
             </div>
-            <div className="rounded-xl bg-white p-4 shadow-sm">
-              <div className="text-2xl font-bold text-amber-600">{warnings}</div>
-              <div className="text-sm text-slate-500">Advarsler</div>
+            <div className="rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 p-6 text-white shadow-lg">
+              <div className="text-3xl font-bold">{warnings}</div>
+              <div className="mt-1 text-sm font-medium text-orange-100">Advarsler</div>
             </div>
-            <div className="rounded-xl bg-white p-4 shadow-sm">
-              <div className="text-2xl font-bold text-red-600">{errors}</div>
-              <div className="text-sm text-slate-500">Fejl</div>
+            <div className="rounded-xl bg-gradient-to-br from-red-500 to-rose-600 p-6 text-white shadow-lg">
+              <div className="text-3xl font-bold">{errors}</div>
+              <div className="mt-1 text-sm font-medium text-rose-100">Fejl</div>
             </div>
           </div>
 
@@ -443,7 +459,7 @@ function SEOAuditPageContent() {
                       setPillarFilter("all");
                       router.push("/");
                     }}
-                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${pillarFilter === "all" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"}`}
+                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${pillarFilter === "all" ? "bg-gradient-to-r from-sky-600 to-blue-600 text-white shadow-md" : "bg-white text-slate-600 shadow-sm hover:bg-slate-50"}`}
                   >
                     Alle
                   </button>
@@ -456,7 +472,7 @@ function SEOAuditPageContent() {
                         setTab("issues");
                         router.push(`?pillar=${encodeURIComponent(p)}`);
                       }}
-                      className={`rounded-full px-3 py-1.5 text-sm font-medium ${pillarFilter === p ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"}`}
+                      className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${pillarFilter === p ? "bg-gradient-to-r from-sky-600 to-blue-600 text-white shadow-md" : "bg-white text-slate-600 shadow-sm hover:bg-slate-50"}`}
                     >
                       {p}
                     </button>
@@ -590,28 +606,28 @@ function SEOAuditPageContent() {
                   <button
                     type="button"
                     onClick={() => setFilter("all")}
-                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "all" ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-700"}`}
+                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${filter === "all" ? "bg-gradient-to-r from-sky-600 to-blue-600 text-white shadow-md" : "bg-white text-slate-700 shadow-sm hover:bg-slate-50"}`}
                   >
                     Alle ({issues.length})
                   </button>
                   <button
                     type="button"
                     onClick={() => setFilter("error")}
-                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "error" ? "bg-red-600 text-white" : "bg-red-100 text-red-800"}`}
+                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${filter === "error" ? "bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-md" : "bg-white text-red-700 shadow-sm hover:bg-red-50"}`}
                   >
                     Fejl ({errors})
                   </button>
                   <button
                     type="button"
                     onClick={() => setFilter("warning")}
-                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "warning" ? "bg-amber-600 text-white" : "bg-amber-100 text-amber-800"}`}
+                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${filter === "warning" ? "bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-md" : "bg-white text-amber-700 shadow-sm hover:bg-amber-50"}`}
                   >
                     Advarsler ({warnings})
                   </button>
                   <button
                     type="button"
                     onClick={() => setFilter("pass")}
-                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "pass" ? "bg-green-600 text-white" : "bg-green-100 text-green-800"}`}
+                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${filter === "pass" ? "bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-md" : "bg-white text-green-700 shadow-sm hover:bg-green-50"}`}
                   >
                     OK ({passed})
                   </button>
@@ -650,7 +666,7 @@ function SEOAuditPageContent() {
                   return (
                     <div
                       key={issue.id}
-                      className={`rounded-lg border p-4 transition hover:shadow-md cursor-pointer ${severityStyles[issue.severity]}`}
+                      className={`rounded-xl border-2 p-5 transition-all hover:shadow-lg hover:scale-[1.01] cursor-pointer ${severityStyles[issue.severity]}`}
                       onClick={() => setSelectedIssue(issue)}
                     >
                       <div className="flex flex-wrap items-center gap-2">
@@ -673,7 +689,7 @@ function SEOAuditPageContent() {
                               key={url}
                               href={`/page/${encodeURIComponent(url)}`}
                               onClick={(e) => e.stopPropagation()}
-                              className="text-xs text-blue-600 hover:underline"
+                              className="text-xs font-medium text-sky-600 hover:text-sky-700 hover:underline transition"
                             >
                               {url}
                             </Link>
@@ -728,49 +744,52 @@ function SEOAuditPageContent() {
               onClick={() => setSelectedIssue(null)}
             >
               <div
-                className="max-h-[80vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl"
+                className="max-h-[80vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-8 shadow-2xl border-2 border-sky-100"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="text-xl font-bold text-slate-800">{selectedIssue.title}</h2>
+                <div className="mb-6 flex items-center justify-between border-b-2 border-slate-100 pb-4">
+                  <h2 className="text-2xl font-bold bg-gradient-to-r from-sky-600 to-blue-600 bg-clip-text text-transparent">{selectedIssue.title}</h2>
                   <button
                     type="button"
                     onClick={() => setSelectedIssue(null)}
-                    className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                    className="rounded-lg p-2 text-slate-500 hover:bg-sky-50 hover:text-sky-600 transition"
                   >
                     ✕
                   </button>
                 </div>
-                <div className="mb-4 flex flex-wrap gap-2">
-                  <span className={`rounded px-2 py-1 text-xs font-semibold uppercase ${severityStyles[selectedIssue.severity]}`}>
+                <div className="mb-6 flex flex-wrap gap-2">
+                  <span className={`rounded-lg px-3 py-1.5 text-xs font-semibold uppercase shadow-sm ${severityStyles[selectedIssue.severity]}`}>
                     {severityLabels[selectedIssue.severity]}
                   </span>
-                  <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">{selectedIssue.category}</span>
+                  <span className="rounded-lg bg-gradient-to-r from-slate-100 to-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm">{selectedIssue.category}</span>
                   {selectedIssue.affectedPages && (
-                    <span className="rounded bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800">
+                    <span className="rounded-lg bg-gradient-to-r from-sky-100 to-blue-100 px-3 py-1.5 text-xs font-semibold text-sky-800 shadow-sm">
                       {selectedIssue.affectedPages.length} side{selectedIssue.affectedPages.length !== 1 ? "r" : ""} berørt
                     </span>
                   )}
                 </div>
-                <p className="mb-4 text-sm text-slate-700">{selectedIssue.message}</p>
+                <p className="mb-4 text-base text-slate-700 leading-relaxed">{selectedIssue.message}</p>
                 {selectedIssue.recommendation && (
-                  <p className="mb-4 text-sm italic text-slate-600">→ {selectedIssue.recommendation}</p>
+                  <div className="mb-6 rounded-lg bg-gradient-to-r from-sky-50 to-blue-50 border-2 border-sky-200 p-4">
+                    <p className="text-sm font-semibold text-sky-900">💡 Anbefaling:</p>
+                    <p className="mt-1 text-sm text-slate-700">{selectedIssue.recommendation}</p>
+                  </div>
                 )}
                 {selectedIssue.value && (
-                  <div className="mb-4 rounded bg-slate-50 p-3 text-xs">
-                    <span className="font-medium text-slate-700">Værdi:</span>
-                    <p className="mt-1 break-all">{selectedIssue.value}</p>
+                  <div className="mb-6 rounded-lg bg-gradient-to-br from-slate-50 to-slate-100 border-2 border-slate-200 p-4">
+                    <span className="font-semibold text-slate-800">Værdi:</span>
+                    <p className="mt-2 break-all text-sm text-slate-700">{selectedIssue.value}</p>
                   </div>
                 )}
                 {selectedIssue.affectedPages && selectedIssue.affectedPages.length > 0 && (
                   <div>
-                    <h3 className="mb-2 font-semibold text-slate-800">Berørte sider:</h3>
-                    <div className="space-y-1">
+                    <h3 className="mb-3 text-lg font-bold text-slate-800">Berørte sider:</h3>
+                    <div className="space-y-2">
                       {selectedIssue.affectedPages.map((pageUrl) => (
                         <Link
                           key={pageUrl}
                           href={`/page/${encodeURIComponent(pageUrl)}`}
-                          className="block rounded border border-slate-200 bg-white p-2 text-sm text-blue-600 hover:bg-slate-50 hover:underline"
+                          className="block rounded-lg border-2 border-sky-200 bg-white p-3 text-sm font-medium text-sky-600 transition hover:border-sky-400 hover:bg-gradient-to-r hover:from-sky-50 hover:to-blue-50 hover:shadow-md"
                         >
                           {pageUrl}
                         </Link>
