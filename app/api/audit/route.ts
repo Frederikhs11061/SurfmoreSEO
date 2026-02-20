@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { runAudit } from "@/lib/audit";
-import { runFullSiteAudit } from "@/lib/fullAudit";
+import { runFullSiteAudit, runBatchAudit } from "@/lib/fullAudit";
 
 export const maxDuration = 60;
 
@@ -9,6 +9,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const url = (body.url || "surfmore.dk").toString().trim();
     const fullSite = !!body.fullSite;
+    const urlBatch = Array.isArray(body.urlBatch) ? body.urlBatch : null;
+    const origin = (body.origin || url).toString().trim();
+
+    if (urlBatch?.length) {
+      const result = await runBatchAudit(urlBatch.map((u: string) => String(u).trim()).filter(Boolean), origin);
+      return Response.json(result);
+    }
     if (!url) {
       return Response.json({ error: "URL mangler" }, { status: 400 });
     }

@@ -1,10 +1,9 @@
 /**
  * Hent alle URLs fra hele sitemap (index → alle child sitemaps → loc).
- * Returnerer alle fundne URLs + et udpluk til audit (begrænset pga. timeout).
+ * Returnerer alle fundne URLs (op til MAX_URLS_TO_RETURN). Frontend auditerer dem i batches.
  */
 
-const MAX_URLS_TO_RETURN = 2000;
-const MAX_PAGES_TO_AUDIT = 25;
+const MAX_URLS_TO_RETURN = 5000;
 const FETCH_TIMEOUT = 8000;
 
 async function fetchText(url: string): Promise<string> {
@@ -95,15 +94,14 @@ export async function getUrlsFromSitemap(origin: string): Promise<SitemapResult>
 
   const unique = Array.from(new Set(allUrls));
   const totalInSitemap = unique.length;
-
-  // Forside først, derefter et blandet udpluk (pages, products, collections)
   const home = origin + "/";
-  const withHome = unique.filter((u) => u !== home);
-  const toAudit = [home, ...withHome].slice(0, MAX_PAGES_TO_AUDIT);
+  // Forside først, derefter resten (til batch-audit bruger frontend hele listen)
+  const ordered = unique.includes(home) ? [home, ...unique.filter((u) => u !== home)] : unique;
 
   return {
-    allUrls: unique,
-    urlsToAudit: toAudit.length ? toAudit : [home],
+    allUrls: ordered,
+    urls: ordered,
+    urlsToAudit: ordered,
     totalInSitemap,
   };
 }

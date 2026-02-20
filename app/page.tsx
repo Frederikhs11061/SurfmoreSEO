@@ -2,6 +2,59 @@
 
 import { useState } from "react";
 import type { AuditResult, AuditIssue, Severity, FullSiteResult, ImprovementSuggestion } from "@/lib/audit";
+import { buildSuggestionsFromAggregated } from "@/lib/suggestions";
+import { getPillarForCategory, SEO_PILLARS, type SEOPillar } from "@/lib/seoPillars";
+
+const BATCH_SIZE = 25;
+
+function mergeBatchResults(
+  batches: FullSiteResult[],
+  totalUrlsInSitemap: number,
+  origin: string
+): FullSiteResult {
+  const pages: AuditResult[] = batches.flatMap((b) => b.pages);
+  const allIssues: AuditIssue[] = [];
+  for (const p of pages) {
+    for (const i of p.issues) {
+      allIssues.push({ ...i, pageUrl: p.url });
+    }
+  }
+  const byKey = new Map<string, AuditIssue & { pages: string[] }>();
+  for (const i of allIssues) {
+    const key = `${i.category}|${i.severity}|${i.title}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      if (i.pageUrl && !existing.pages.includes(i.pageUrl)) existing.pages.push(i.pageUrl);
+    } else {
+      byKey.set(key, { ...i, pages: i.pageUrl ? [i.pageUrl] : [] });
+    }
+  }
+  const aggregated: AuditIssue[] = Array.from(byKey.values()).map(({ pages: p, ...rest }) => ({
+    ...rest,
+    pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
+  }));
+  const categories: Record<string, { passed: number; failed: number; warnings: number }> = {};
+  for (const i of aggregated) {
+    if (!categories[i.category]) categories[i.category] = { passed: 0, failed: 0, warnings: 0 };
+    if (i.severity === "pass") categories[i.category].passed++;
+    else if (i.severity === "error") categories[i.category].failed++;
+    else categories[i.category].warnings++;
+  }
+  const total = aggregated.length;
+  const passed = aggregated.filter((i) => i.severity === "pass").length;
+  const overallScore = total > 0 ? Math.round((passed / total) * 100) : 0;
+  const improvementSuggestions = buildSuggestionsFromAggregated(aggregated);
+  return {
+    origin,
+    pages,
+    aggregated,
+    overallScore,
+    categories,
+    pagesAudited: pages.length,
+    totalUrlsInSitemap,
+    improvementSuggestions,
+  };
+}
 
 const severityStyles: Record<Severity, string> = {
   error: "bg-red-100 text-red-800 border-red-200",
@@ -27,25 +80,71 @@ export default function SEOAuditPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Severity | "all">("all");
   const [tab, setTab] = useState<"overview" | "suggestions" | "issues" | "pages">("overview");
+  const [progress, setProgress] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortPagesBy, setSortPagesBy] = useState<"score-asc" | "score-desc" | "url" | "category">("score-asc");
+  const [pillarFilter, setPillarFilter] = useState<string>("all");
 
   const run = async () => {
     setLoading(true);
     setError(null);
     setResult(null);
+    setProgress("Henter sitemap…");
+    const domain = (url || "surfmore.dk").trim();
+    const origin = domain.startsWith("http") ? new URL(domain).origin : `https://${domain}`;
     try {
-      const res = await fetch("/api/audit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url || "surfmore.dk", fullSite }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Audit fejlede");
-      setResult(data);
+      if (fullSite) {
+        const sitemapRes = await fetch(`/api/sitemap?url=${encodeURIComponent(domain)}`);
+        const sitemapData = await sitemapRes.json();
+        if (!sitemapRes.ok) throw new Error(sitemapData.error || "Kunne ikke hente sitemap");
+        const allUrls: string[] = sitemapData.urls ?? sitemapData.urlsToAudit ?? [];
+        const totalInSitemap = sitemapData.totalInSitemap ?? allUrls.length;
+        setProgress(`Sitemap: ${allUrls.length} URLs. Starter audit…`);
+        if (allUrls.length === 0) {
+          const fallback = await fetch("/api/audit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: domain, fullSite: true }),
+          });
+          const fallbackData = await fallback.json();
+          if (!fallback.ok) throw new Error(fallbackData.error || "Audit fejlede");
+          setResult(fallbackData);
+        } else {
+          const batches: FullSiteResult[] = [];
+          const totalBatches = Math.ceil(allUrls.length / BATCH_SIZE);
+          for (let i = 0; i < allUrls.length; i += BATCH_SIZE) {
+            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+            setProgress(`Auditerer sider ${i + 1}–${Math.min(i + BATCH_SIZE, allUrls.length)} af ${allUrls.length} (batch ${batchNum}/${totalBatches})…`);
+            const chunk = allUrls.slice(i, i + BATCH_SIZE);
+            const res = await fetch("/api/audit", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ urlBatch: chunk, origin }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Batch audit fejlede");
+            batches.push(data);
+          }
+          setProgress("Samler resultater…");
+          const merged = mergeBatchResults(batches, totalInSitemap, origin);
+          setResult(merged);
+        }
+      } else {
+        const res = await fetch("/api/audit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: domain, fullSite: false }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Audit fejlede");
+        setResult(data);
+      }
       setTab("overview");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Noget gik galt");
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   };
 
@@ -53,15 +152,63 @@ export default function SEOAuditPage() {
   const single = result && !isFullSiteResult(result) ? result : null;
 
   const issues = full ? full.aggregated : single ? single.issues : [];
-  const filtered =
-    filter === "all"
-      ? issues
-      : issues.filter((i) => i.severity === filter);
+  const byPillar = (iss: AuditIssue[]) => {
+    if (pillarFilter === "all") return iss;
+    return iss.filter((i) => getPillarForCategory(i.category) === pillarFilter);
+  };
+  const bySeverity =
+    filter === "all" ? (iss: AuditIssue[]) => iss : (iss: AuditIssue[]) => iss.filter((i) => i.severity === filter);
+  const filtered = bySeverity(byPillar(issues));
   const errors = issues.filter((i) => i.severity === "error").length;
   const warnings = issues.filter((i) => i.severity === "warning").length;
   const passed = issues.filter((i) => i.severity === "pass").length;
   const score = full ? full.overallScore : single ? single.score : 0;
   const categories = full ? full.categories : single ? single.categories : {};
+
+  const pillarCategories: Record<SEOPillar, Record<string, { passed: number; failed: number; warnings: number }>> = {
+    "Teknisk SEO": {},
+    "On-page SEO": {},
+    "Link building": {},
+    "Off-page SEO": {},
+  };
+  for (const [name, c] of Object.entries(categories)) {
+    const pillar = getPillarForCategory(name);
+    pillarCategories[pillar][name] = c;
+  }
+
+  const pageCategory = (pageUrl: string): string => {
+    try {
+      const path = new URL(pageUrl).pathname.toLowerCase();
+      if (path.includes("/products/")) return "Produkter";
+      if (path.includes("/collections/")) return "Kollektioner";
+      if (path.includes("/pages/") || path === "/") return "Sider";
+      return "Andet";
+    } catch {
+      return "Andet";
+    }
+  };
+  const filteredPages = full?.pages ?? [];
+  const searchLower = searchQuery.trim().toLowerCase();
+  const searchedPages =
+    searchLower === ""
+      ? filteredPages
+      : filteredPages.filter(
+          (p) =>
+            p.url.toLowerCase().includes(searchLower) ||
+            pageCategory(p.url).toLowerCase().includes(searchLower)
+        );
+  const sortedPages = [...searchedPages].sort((a, b) => {
+    if (sortPagesBy === "score-asc") return a.score - b.score;
+    if (sortPagesBy === "score-desc") return b.score - a.score;
+    if (sortPagesBy === "url") return a.url.localeCompare(b.url);
+    return pageCategory(a.url).localeCompare(pageCategory(b.url)) || a.url.localeCompare(b.url);
+  });
+
+  const suggestionsFilteredByPillar =
+    full?.improvementSuggestions && pillarFilter !== "all"
+      ? full.improvementSuggestions.filter((s) => getPillarForCategory(s.category) === pillarFilter)
+      : full?.improvementSuggestions ?? [];
+  const suggestionsToShow = pillarFilter === "all" ? (full?.improvementSuggestions ?? []) : suggestionsFilteredByPillar;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
@@ -90,7 +237,7 @@ export default function SEOAuditPage() {
             onChange={(e) => setFullSite(e.target.checked)}
             className="rounded border-slate-300"
           />
-          <span className="text-sm text-slate-700">Hele sitet (crawler hele sitemap, auditerer op til 25 sider)</span>
+          <span className="text-sm text-slate-700">Hele sitet (crawler sitemap, auditerer alle sider i batches)</span>
         </label>
         <button
           type="button"
@@ -98,9 +245,13 @@ export default function SEOAuditPage() {
           disabled={loading}
           className="rounded-lg bg-slate-800 px-5 py-2.5 font-medium text-white hover:bg-slate-700 disabled:opacity-50"
         >
-          {loading ? (fullSite ? "Crawler hele sitemap og auditerer sider…" : "Kører audit…") : "Kør audit"}
+          {loading ? (progress || (fullSite ? "Henter sitemap…" : "Kører audit…")) : "Kør audit"}
         </button>
       </div>
+
+      {loading && progress && (
+        <p className="mt-2 text-sm text-slate-600">{progress}</p>
+      )}
 
       {error && (
         <div className="mt-4 rounded-lg bg-red-50 p-4 text-red-700">
@@ -131,7 +282,7 @@ export default function SEOAuditPage() {
 
           {full && (
             <p className="mt-2 text-sm text-slate-500">
-              Sitemap: {full.totalUrlsInSitemap ?? full.pagesAudited} URLs fundet. Auditeret: {full.origin} – {full.pagesAudited} sider.
+              Sitemap: {full.totalUrlsInSitemap ?? 0} URLs fundet. Auditeret: {full.origin} – {full.pagesAudited} sider.
             </p>
           )}
           {single && (
@@ -141,46 +292,70 @@ export default function SEOAuditPage() {
           )}
 
           {full && (
-            <div className="mt-6 flex flex-wrap gap-2 border-b border-slate-200">
-              <button
-                type="button"
-                onClick={() => setTab("overview")}
-                className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "overview" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
-              >
-                Overblik
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab("suggestions")}
-                className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "suggestions" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
-              >
-                Forbedringsforslag
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab("issues")}
-                className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "issues" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
-              >
-                Alle fund
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab("pages")}
-                className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "pages" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
-              >
-                Pr. side
-              </button>
-            </div>
+            <>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <span className="text-sm font-medium text-slate-600">SEO-pille:</span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPillarFilter("all")}
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${pillarFilter === "all" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"}`}
+                  >
+                    Alle
+                  </button>
+                  {SEO_PILLARS.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setPillarFilter(p)}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium ${pillarFilter === p ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"}`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-6 flex flex-wrap gap-2 border-b border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setTab("overview")}
+                  className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "overview" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
+                >
+                  Overblik
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("suggestions")}
+                  className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "suggestions" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
+                >
+                  Forbedringsforslag
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("issues")}
+                  className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "issues" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
+                >
+                  Alle fund
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("pages")}
+                  className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "pages" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
+                >
+                  Pr. side
+                </button>
+              </div>
+            </>
           )}
 
-          {tab === "suggestions" && full && full.improvementSuggestions && full.improvementSuggestions.length > 0 && (
+          {tab === "suggestions" && full && suggestionsToShow.length > 0 && (
             <div className="mt-6 space-y-4">
               <h2 className="text-lg font-semibold text-slate-800">Forbedringsforslag</h2>
               <p className="text-sm text-slate-600">
-                Konkrete skridt for at rette fejl og advarsler. Sorteret efter alvorlighed (fejl først).
+                Konkrete skridt for at rette fejl og advarsler. {pillarFilter !== "all" && `Filtreret: ${pillarFilter}.`} Sorteret efter alvorlighed (fejl først).
               </p>
               <div className="space-y-4">
-                {full.improvementSuggestions.map((s: ImprovementSuggestion) => (
+                {suggestionsToShow.map((s: ImprovementSuggestion) => (
                   <div
                     key={s.id}
                     className={`rounded-xl border p-4 ${s.severity === "error" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}
@@ -207,31 +382,41 @@ export default function SEOAuditPage() {
           )}
 
           {tab === "overview" && full && Object.keys(categories).length > 0 && (
-            <div className="mt-6 space-y-4">
-              <h2 className="text-lg font-semibold text-slate-800">Score pr. kategori</h2>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {Object.entries(categories).map(([name, c]) => {
-                  const total = c.passed + c.failed + c.warnings;
-                  const pct = total > 0 ? Math.round((c.passed / total) * 100) : 0;
-                  return (
-                    <div key={name} className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="flex justify-between">
-                        <span className="font-medium text-slate-700">{name}</span>
-                        <span className="text-slate-500">{pct}%</span>
-                      </div>
-                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full bg-green-500"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {c.passed} OK, {c.warnings} advarsler, {c.failed} fejl
-                      </p>
+            <div className="mt-6 space-y-6">
+              <h2 className="text-lg font-semibold text-slate-800">Score pr. SEO-pille og kategori</h2>
+              {SEO_PILLARS.map((pillar) => {
+                const cats = pillarCategories[pillar];
+                const entries = Object.entries(cats);
+                if (entries.length === 0) return null;
+                return (
+                  <div key={pillar}>
+                    <h3 className="mb-2 font-medium text-slate-700">{pillar}</h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {entries.map(([name, c]) => {
+                        const total = c.passed + c.failed + c.warnings;
+                        const pct = total > 0 ? Math.round((c.passed / total) * 100) : 0;
+                        return (
+                          <div key={name} className="rounded-lg border border-slate-200 bg-white p-4">
+                            <div className="flex justify-between">
+                              <span className="font-medium text-slate-700">{name}</span>
+                              <span className="text-slate-500">{pct}%</span>
+                            </div>
+                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+                              <div
+                                className="h-full rounded-full bg-green-500"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {c.passed} OK, {c.warnings} advarsler, {c.failed} fejl
+                            </p>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -306,15 +491,50 @@ export default function SEOAuditPage() {
           {tab === "pages" && full && (
             <div className="mt-6 space-y-3">
               <h2 className="text-lg font-semibold text-slate-800">Score pr. side</h2>
-              {full.pages.map((p) => (
-                <div
-                  key={p.url}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-4"
-                >
-                  <span className="truncate text-sm text-slate-700">{p.url}</span>
-                  <span className="font-semibold text-slate-800">{p.score}%</span>
-                </div>
-              ))}
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <input
+                  type="search"
+                  placeholder="Søg på URL eller produkt…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-64 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  Sorter:
+                  <select
+                    value={sortPagesBy}
+                    onChange={(e) => setSortPagesBy(e.target.value as typeof sortPagesBy)}
+                    className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  >
+                    <option value="score-asc">Score (lav først)</option>
+                    <option value="score-desc">Score (høj først)</option>
+                    <option value="url">URL A–Å</option>
+                    <option value="category">Kategori</option>
+                  </select>
+                </label>
+                {searchLower && (
+                  <span className="text-sm text-slate-500">
+                    {sortedPages.length} af {filteredPages.length} sider
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                {sortedPages.map((p) => (
+                  <div
+                    key={p.url}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-4"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="text-xs font-medium text-slate-400">{pageCategory(p.url)}</span>
+                      <span className="ml-2 truncate text-sm text-slate-700">{p.url}</span>
+                    </div>
+                    <span className="font-semibold text-slate-800">{p.score}%</span>
+                  </div>
+                ))}
+              </div>
+              {sortedPages.length === 0 && (
+                <p className="text-sm text-slate-500">Ingen sider matcher søgningen.</p>
+              )}
             </div>
           )}
         </>
