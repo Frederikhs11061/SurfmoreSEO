@@ -10,7 +10,7 @@ import { join } from "path";
 
 const FETCH_TIMEOUT = 8000;
 const CACHE_DIR = join(process.cwd(), ".cache");
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 timer - aggressiv cache
+const CACHE_TTL = 1 * 60 * 60 * 1000; // 1 time - balanceret cache (reduceret fra 24 timer for at undgå 405/504 fejl)
 
 // In-memory cache for ekstra hurtig adgang (deles mellem alle requests)
 const memoryCache = new Map<string, { data: SitemapResult; cachedAt: number }>();
@@ -56,7 +56,18 @@ async function loadCachedSitemap(origin: string): Promise<SitemapResult | null> 
     // Tjek om cache er udløbet
     const age = Date.now() - cached.cachedAt;
     if (age > CACHE_TTL) {
+      // Slet udløbet cache fil
+      try {
+        await fs.unlink(cachePath);
+      } catch {
+        // Ignorer fejl ved sletning
+      }
       return null; // Cache udløbet
+    }
+    
+    // Valider cache data
+    if (!Array.isArray(cached.urls) || cached.urls.length === 0) {
+      return null; // Ugyldig cache data
     }
     
     const home = origin + "/";
@@ -68,22 +79,40 @@ async function loadCachedSitemap(origin: string): Promise<SitemapResult | null> 
       allUrls: ordered,
       urls: ordered,
       urlsToAudit: ordered,
-      totalInSitemap: cached.totalInSitemap,
+      totalInSitemap: cached.totalInSitemap || ordered.length,
     };
 
-    // Gem også i memory cache for hurtigere adgang næste gang
+    // Gem også i memory cache for hurtigere adgang næste gang (begræns størrelse)
+    if (memoryCache.size > 50) {
+      // Ryd op i memory cache hvis den bliver for stor
+      const oldest = Array.from(memoryCache.entries())
+        .sort((a, b) => a[1].cachedAt - b[1].cachedAt)[0];
+      if (oldest) memoryCache.delete(oldest[0]);
+    }
     memoryCache.set(origin, { data: result, cachedAt: cached.cachedAt });
     
     return result;
-  } catch {
-    return null; // Ingen cache eller fejl ved læsning
+  } catch (e) {
+    // Hvis cache fil er korrupt eller mangler, returner null
+    return null;
   }
 }
 
 async function saveCachedSitemap(origin: string, result: SitemapResult): Promise<void> {
   const now = Date.now();
   
+  // Valider data før caching
+  if (!result || !Array.isArray(result.allUrls) || result.allUrls.length === 0) {
+    return; // Ikke cache tomme eller ugyldige resultater
+  }
+  
   // Gem i memory cache (hurtigst, deles mellem alle requests)
+  // Begræns størrelse for at undgå memory issues
+  if (memoryCache.size > 50) {
+    const oldest = Array.from(memoryCache.entries())
+      .sort((a, b) => a[1].cachedAt - b[1].cachedAt)[0];
+    if (oldest) memoryCache.delete(oldest[0]);
+  }
   memoryCache.set(origin, { data: result, cachedAt: now });
   
   // Gem også i fil-cache (persistent, overlever server restarts)
@@ -96,8 +125,9 @@ async function saveCachedSitemap(origin: string, result: SitemapResult): Promise
       cachedAt: now,
     };
     await fs.writeFile(cachePath, JSON.stringify(cached, null, 2), "utf-8");
-  } catch {
+  } catch (e) {
     // Ignorer fejl ved fil-caching (ikke kritisk, memory cache virker stadig)
+    console.warn("Kunne ikke gemme sitemap cache:", e);
   }
 }
 

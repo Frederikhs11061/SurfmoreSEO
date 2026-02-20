@@ -227,16 +227,7 @@ function SEOAuditPageContent() {
     }
   }, [url]);
 
-  // Auto-start sitemap crawl når siden loader hvis URL er sat og fullSite er aktivt
-  useEffect(() => {
-    if (url && fullSite && !result && !loading && !error) {
-      const timer = setTimeout(() => {
-        run();
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Kun ved første mount
+  // Fjernet auto-start - sitemap fetches kun når brugeren trykker på knappen
 
   const run = async (forceRefresh: boolean = false) => {
     setLoading(true);
