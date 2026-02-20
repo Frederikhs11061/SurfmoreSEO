@@ -10,7 +10,7 @@ import { join } from "path";
 
 const FETCH_TIMEOUT = 8000;
 const CACHE_DIR = join(process.cwd(), ".cache");
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 timer
+const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 timer
 
 async function ensureCacheDir() {
   try {
@@ -154,9 +154,9 @@ async function crawlSitemapRecursive(
   }
 }
 
-export async function getUrlsFromSitemap(origin: string, useCache: boolean = true): Promise<SitemapResult> {
-  // Prøv at hente fra cache først
-  if (useCache) {
+export async function getUrlsFromSitemap(origin: string, forceRefresh: boolean = false): Promise<SitemapResult> {
+  // Prøv at hente fra cache først (hvis ikke force refresh)
+  if (!forceRefresh) {
     const cached = await loadCachedSitemap(origin);
     if (cached) {
       return cached;
@@ -214,10 +214,8 @@ export async function getUrlsFromSitemap(origin: string, useCache: boolean = tru
     totalInSitemap,
   };
 
-  // Gem i cache
-  if (useCache) {
-    await saveCachedSitemap(origin, result);
-  }
+  // Gem i cache (altid gem efter fetch, også ved force refresh)
+  await saveCachedSitemap(origin, result);
 
   return result;
 }

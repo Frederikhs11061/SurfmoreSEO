@@ -238,7 +238,7 @@ function SEOAuditPageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Kun ved første mount
 
-  const run = async () => {
+  const run = async (forceRefresh: boolean = false) => {
     setLoading(true);
     setError(null);
     setResult(null);
@@ -247,7 +247,7 @@ function SEOAuditPageContent() {
     const origin = domain.startsWith("http") ? new URL(domain).origin : `https://${domain}`;
     try {
       if (fullSite) {
-        const sitemapRes = await fetch(`/api/sitemap?url=${encodeURIComponent(domain)}`);
+        const sitemapRes = await fetch(`/api/sitemap?url=${encodeURIComponent(domain)}${forceRefresh ? "&forceRefresh=true" : ""}`);
         const sitemapData = await sitemapRes.json().catch(() => ({}));
         if (!sitemapRes.ok) throw new Error(sitemapData?.error || "Kunne ikke hente sitemap");
         const rawUrls = sitemapData.urls ?? sitemapData.urlsToAudit ?? sitemapData.allUrls;
@@ -541,14 +541,27 @@ function SEOAuditPageContent() {
             />
             <span className="text-sm font-medium text-slate-700">Hele sitet (crawler sitemap, auditerer alle sider i batches)</span>
           </label>
-          <button
-            type="button"
-            onClick={run}
-            disabled={loading}
-            className="rounded-lg bg-gradient-to-r from-sky-600 to-blue-600 px-6 py-2.5 font-semibold text-white shadow-md transition hover:from-sky-700 hover:to-blue-700 hover:shadow-lg disabled:opacity-50 disabled:hover:shadow-md"
-          >
-            {loading ? (progress || (fullSite ? "Henter sitemap…" : "Kører audit…")) : "🚀 Kør audit"}
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => run(false)}
+              disabled={loading}
+              className="rounded-lg bg-gradient-to-r from-sky-600 to-blue-600 px-6 py-2.5 font-semibold text-white shadow-md transition hover:from-sky-700 hover:to-blue-700 hover:shadow-lg disabled:opacity-50 disabled:hover:shadow-md"
+            >
+              {loading ? (progress || (fullSite ? "Henter sitemap…" : "Kører audit…")) : "🚀 Kør audit"}
+            </button>
+            {fullSite && (
+              <button
+                type="button"
+                onClick={() => run(true)}
+                disabled={loading}
+                className="rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:from-amber-600 hover:to-orange-700 hover:shadow-lg disabled:opacity-50 disabled:hover:shadow-md"
+                title="Opdater sitemap cache (ignorerer 4 timers cache)"
+              >
+                🔄 Opdater cache
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
