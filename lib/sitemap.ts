@@ -10,7 +10,10 @@ import { join } from "path";
 
 const FETCH_TIMEOUT = 8000;
 const CACHE_DIR = join(process.cwd(), ".cache");
-const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 timer
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 timer - aggressiv cache
+
+// In-memory cache for ekstra hurtig adgang (deles mellem alle requests)
+const memoryCache = new Map<string, { data: SitemapResult; cachedAt: number }>();
 
 async function ensureCacheDir() {
   try {
@@ -32,6 +35,18 @@ interface CachedSitemap {
 }
 
 async function loadCachedSitemap(origin: string): Promise<SitemapResult | null> {
+  // Tjek in-memory cache først (hurtigst)
+  const memCached = memoryCache.get(origin);
+  if (memCached) {
+    const age = Date.now() - memCached.cachedAt;
+    if (age <= CACHE_TTL) {
+      return memCached.data; // Returner fra memory cache
+    } else {
+      memoryCache.delete(origin); // Fjern udløbet cache
+    }
+  }
+
+  // Tjek fil-cache (langsommere, men persistent)
   try {
     await ensureCacheDir();
     const cachePath = getCachePath(origin);
@@ -49,29 +64,40 @@ async function loadCachedSitemap(origin: string): Promise<SitemapResult | null> 
       ? [home, ...cached.urls.filter((u) => u !== home)] 
       : cached.urls;
     
-    return {
+    const result: SitemapResult = {
       allUrls: ordered,
       urls: ordered,
       urlsToAudit: ordered,
       totalInSitemap: cached.totalInSitemap,
     };
+
+    // Gem også i memory cache for hurtigere adgang næste gang
+    memoryCache.set(origin, { data: result, cachedAt: cached.cachedAt });
+    
+    return result;
   } catch {
     return null; // Ingen cache eller fejl ved læsning
   }
 }
 
 async function saveCachedSitemap(origin: string, result: SitemapResult): Promise<void> {
+  const now = Date.now();
+  
+  // Gem i memory cache (hurtigst, deles mellem alle requests)
+  memoryCache.set(origin, { data: result, cachedAt: now });
+  
+  // Gem også i fil-cache (persistent, overlever server restarts)
   try {
     await ensureCacheDir();
     const cachePath = getCachePath(origin);
     const cached: CachedSitemap = {
       urls: result.allUrls,
       totalInSitemap: result.totalInSitemap,
-      cachedAt: Date.now(),
+      cachedAt: now,
     };
     await fs.writeFile(cachePath, JSON.stringify(cached, null, 2), "utf-8");
   } catch {
-    // Ignorer fejl ved caching (ikke kritisk)
+    // Ignorer fejl ved fil-caching (ikke kritisk, memory cache virker stadig)
   }
 }
 

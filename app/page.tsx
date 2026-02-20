@@ -268,6 +268,7 @@ function SEOAuditPageContent() {
           const batches: FullSiteResult[] = [];
           const totalBatches = Math.ceil(allUrls.length / BATCH_SIZE);
           const chunks: string[][] = [];
+          // Opdel ALLE URLs i batches - ingen begrænsning, alle URLs bliver auditeret
           for (let i = 0; i < allUrls.length; i += BATCH_SIZE) {
             chunks.push(allUrls.slice(i, i + BATCH_SIZE));
           }
