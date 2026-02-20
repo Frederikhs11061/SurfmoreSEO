@@ -96,9 +96,20 @@ function SEOAuditPageContent() {
     const pillar = searchParams.get("pillar");
     if (pillar && SEO_PILLARS.includes(pillar as SEOPillar)) {
       setPillarFilter(pillar);
-      setTab("issues");
+      setTab("overview");
     }
   }, [searchParams]);
+
+  // Auto-start sitemap crawl når siden loader hvis URL er sat og fullSite er aktivt
+  useEffect(() => {
+    if (url && fullSite && !result && !loading && !error) {
+      const timer = setTimeout(() => {
+        run();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Kun ved første mount
 
   const run = async () => {
     setLoading(true);
@@ -199,15 +210,48 @@ function SEOAuditPageContent() {
   const categories: Record<string, { passed: number; failed: number; warnings: number }> =
     (full ? full.categories : single ? single.categories : undefined) ?? {};
 
-  const pillarCategories: Record<SEOPillar, Record<string, { passed: number; failed: number; warnings: number }>> = {
+  // Byg kategorier baseret på faktiske sider, ikke issues
+  const pillarCategories: Record<SEOPillar, Record<string, { passed: number; failed: number; warnings: number; totalPages: number }>> = {
     "Teknisk SEO": {},
     "On-page SEO": {},
     "Link building": {},
     "Off-page SEO": {},
   };
-  for (const [name, c] of Object.entries(categories)) {
-    const pillar = getPillarForCategory(name);
-    pillarCategories[pillar][name] = c;
+  
+  if (full?.pages) {
+    // Tæl faktiske sider pr. kategori og severity
+    for (const page of full.pages) {
+      const categoryCounts = new Map<string, { passed: number; failed: number; warnings: number }>();
+      
+      // Tæl issues pr. kategori på denne side
+      for (const issue of page.issues) {
+        if (!categoryCounts.has(issue.category)) {
+          categoryCounts.set(issue.category, { passed: 0, failed: 0, warnings: 0 });
+        }
+        const counts = categoryCounts.get(issue.category)!;
+        if (issue.severity === "pass") counts.passed++;
+        else if (issue.severity === "error") counts.failed++;
+        else counts.warnings++;
+      }
+      
+      // Opdater pillarCategories med denne sides counts
+      for (const [cat, counts] of Array.from(categoryCounts.entries())) {
+        const pillar = getPillarForCategory(cat);
+        if (!pillarCategories[pillar][cat]) {
+          pillarCategories[pillar][cat] = { passed: 0, failed: 0, warnings: 0, totalPages: 0 };
+        }
+        pillarCategories[pillar][cat].passed += counts.passed;
+        pillarCategories[pillar][cat].failed += counts.failed;
+        pillarCategories[pillar][cat].warnings += counts.warnings;
+        pillarCategories[pillar][cat].totalPages++; // Én side har denne kategori
+      }
+    }
+  } else {
+    // Fallback til gammel metode hvis ingen pages
+    for (const [name, c] of Object.entries(categories)) {
+      const pillar = getPillarForCategory(name);
+      pillarCategories[pillar][name] = { ...c, totalPages: full?.pagesAudited ?? 0 };
+    }
   }
 
   const pageCategory = (pageUrl: string): string => {
@@ -442,8 +486,11 @@ function SEOAuditPageContent() {
 
           {tab === "overview" && full && Object.keys(categories).length > 0 && (
             <div className="mt-6 space-y-6">
-              <h2 className="text-lg font-semibold text-slate-800">Score pr. SEO-pille og kategori</h2>
-              {SEO_PILLARS.map((pillar) => {
+              <h2 className="text-lg font-semibold text-slate-800">
+                Score pr. SEO-pille og kategori
+                {pillarFilter !== "all" && ` (${pillarFilter})`}
+              </h2>
+              {(pillarFilter === "all" ? SEO_PILLARS : [pillarFilter as SEOPillar]).map((pillar) => {
                 const cats = pillarCategories[pillar];
                 const entries = Object.entries(cats);
                 if (entries.length === 0) return null;
@@ -467,7 +514,7 @@ function SEOAuditPageContent() {
                               />
                             </div>
                             <p className="mt-1 text-xs text-slate-500">
-                              {c.passed} OK, {c.warnings} advarsler, {c.failed} fejl
+                              {c.totalPages} side{c.totalPages !== 1 ? "r" : ""} · {c.passed} OK, {c.warnings} advarsler, {c.failed} fejl
                             </p>
                           </div>
                         );
