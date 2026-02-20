@@ -1,9 +1,9 @@
 /**
  * Hent alle URLs fra hele sitemap (index → alle child sitemaps → loc).
  * Returnerer alle fundne URLs. Frontend auditerer dem i batches.
+ * Håndterer rekursive/nested sitemaps korrekt.
  */
 
-const MAX_URLS_TO_RETURN = 50000; // Høj grænse for at dække meget store sites
 const FETCH_TIMEOUT = 8000;
 
 async function fetchText(url: string): Promise<string> {
@@ -26,6 +26,10 @@ function extractLocFromXml(xml: string): string[] {
   return locs;
 }
 
+function isSitemapUrl(url: string): boolean {
+  return url.includes("sitemap") && (url.endsWith(".xml") || url.includes("/sitemap"));
+}
+
 export interface SitemapResult {
   /** Alle URLs fra hele sitemappet (op til MAX_URLS_TO_RETURN) */
   allUrls: string[];
@@ -37,53 +41,65 @@ export interface SitemapResult {
   totalInSitemap: number;
 }
 
-export async function getUrlsFromSitemap(origin: string): Promise<SitemapResult> {
-  const indexUrl = `${origin}/sitemap.xml`;
-  const allUrls: string[] = [];
-  const seen = new Set<string>();
+async function crawlSitemapRecursive(
+  sitemapUrl: string,
+  origin: string,
+  seenUrls: Set<string>,
+  seenSitemaps: Set<string>,
+  allUrls: string[]
+): Promise<void> {
+  // Undgå at crawle samme sitemap flere gange
+  if (seenSitemaps.has(sitemapUrl)) return;
+  seenSitemaps.add(sitemapUrl);
 
   try {
-    const indexXml = await fetchText(indexUrl);
-    // Find alle sitemaps (både direkte URLs og child sitemaps)
-    const allSitemapUrls = extractLocFromXml(indexXml);
+    const xml = await fetchText(sitemapUrl);
+    const locs = extractLocFromXml(xml);
     
-    // Hvis der er child sitemaps (indeholder "sitemap" i URL), crawler vi dem
-    // Ellers er URLs direkte i index-sitemap
-    const childSitemaps = allSitemapUrls.filter(
-      (u) => u.includes("sitemap") && !u.includes("/no/")
-    );
+    const nestedSitemaps: string[] = [];
+    const pageUrls: string[] = [];
     
-    if (childSitemaps.length > 0) {
-      // Crawl alle child sitemaps systematisk
-      for (const sitemapUrl of childSitemaps) {
-        if (allUrls.length >= MAX_URLS_TO_RETURN) break;
-        try {
-          const xml = await fetchText(sitemapUrl);
-          const urls = extractLocFromXml(xml);
-          for (const u of urls) {
-            if (!seen.has(u) && (u.startsWith(origin) || u.startsWith("http"))) {
-              seen.add(u);
-              allUrls.push(u);
-              if (allUrls.length >= MAX_URLS_TO_RETURN) break;
-            }
-          }
-        } catch (e) {
-          console.warn(`Kunne ikke hente sitemap: ${sitemapUrl}`, e);
-        }
+    // Opdel i sitemaps og URLs
+    for (const loc of locs) {
+      if (isSitemapUrl(loc)) {
+        nestedSitemaps.push(loc);
+      } else {
+        pageUrls.push(loc);
       }
-    } else {
-      // Hvis ingen child sitemaps, så er URLs direkte i index
-      for (const u of allSitemapUrls) {
-        if (!seen.has(u) && (u.startsWith(origin) || u.startsWith("http"))) {
-          seen.add(u);
-          allUrls.push(u);
-          if (allUrls.length >= MAX_URLS_TO_RETURN) break;
-        }
+    }
+    
+    // Hvis der er nested sitemaps, crawler vi dem først (rekursivt)
+    for (const nestedSitemap of nestedSitemaps) {
+      await crawlSitemapRecursive(nestedSitemap, origin, seenUrls, seenSitemaps, allUrls);
+    }
+    
+    // Tilføj alle page URLs
+    for (const url of pageUrls) {
+      if (!seenUrls.has(url) && (url.startsWith(origin) || url.startsWith("http"))) {
+        seenUrls.add(url);
+        allUrls.push(url);
       }
     }
   } catch (e) {
+    console.warn(`Kunne ikke hente sitemap: ${sitemapUrl}`, e);
+  }
+}
+
+export async function getUrlsFromSitemap(origin: string): Promise<SitemapResult> {
+  const indexUrl = `${origin}/sitemap.xml`;
+  const allUrls: string[] = [];
+  const seenUrls = new Set<string>();
+  const seenSitemaps = new Set<string>();
+
+  try {
+    await crawlSitemapRecursive(indexUrl, origin, seenUrls, seenSitemaps, allUrls);
+  } catch (e) {
     console.warn("Kunne ikke hente sitemap index, bruger kun forsiden", e);
-    allUrls.push(origin + "/");
+    const home = origin + "/";
+    if (!seenUrls.has(home)) {
+      allUrls.push(home);
+      seenUrls.add(home);
+    }
   }
 
   const unique = Array.from(new Set(allUrls));
@@ -91,11 +107,6 @@ export async function getUrlsFromSitemap(origin: string): Promise<SitemapResult>
   const home = origin + "/";
   // Forside først, derefter resten (til batch-audit bruger frontend hele listen)
   const ordered = unique.includes(home) ? [home, ...unique.filter((u) => u !== home)] : unique;
-
-  // Log hvis vi ramte grænsen
-  if (allUrls.length >= MAX_URLS_TO_RETURN) {
-    console.warn(`⚠️ Sitemap crawl nåede grænsen på ${MAX_URLS_TO_RETURN} URLs. Der kan være flere sider i sitemappen.`);
-  }
 
   return {
     allUrls: ordered,

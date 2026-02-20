@@ -73,10 +73,10 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
 
   const improvementSuggestions = buildSuggestions(aggregated, byKey);
   
-  // Aggreger EEAT overordnet (over hele sitet)
+  // Aggreger EEAT overordnet (over hele sitet) med trust signals metrics
   const allEeatData = pages.map(p => p.eeat).filter((e): e is NonNullable<typeof e> => e !== undefined);
   let aggregatedEeat: FullSiteResult["eeat"] | undefined;
-  if (allEeatData.length > 0) {
+  if (allEeatData.length > 0 || pages.length > 0) {
     const hasAuthor = allEeatData.some(e => e.author);
     const hasAuthorBio = allEeatData.some(e => e.authorBio);
     const hasExpertise = allEeatData.some(e => e.expertise);
@@ -88,6 +88,37 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
     const authorCounts = new Map<string, number>();
     authors.forEach(a => authorCounts.set(a, (authorCounts.get(a) || 0) + 1));
     const mostCommonAuthor = Array.from(authorCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+    
+    // Beregn trust signals metrics
+    const pagesWithAuthor = pages.filter(p => p.eeat?.author).length;
+    const pagesWithSchema = pages.filter(p => {
+      const schemaIssues = p.issues.filter(i => i.category === "Strukturerede data" && i.severity === "pass");
+      return schemaIssues.length > 0;
+    }).length;
+    const pagesWithOpenGraph = pages.filter(p => {
+      const ogIssues = p.issues.filter(i => i.category === "Social (OG)" && i.severity === "pass");
+      return ogIssues.length >= 2;
+    }).length;
+    const pagesWithHttps = pages.filter(p => {
+      const httpsIssues = p.issues.filter(i => i.category === "Sikkerhed" && i.title === "HTTPS" && i.severity === "pass");
+      return httpsIssues.length > 0;
+    }).length;
+    const pagesWithSufficientContent = pages.filter(p => {
+      const contentIssues = p.issues.filter(i => i.category === "Indhold" && (i.title === "Tekstmængde" || i.title === "God tekstmængde"));
+      return contentIssues.length > 0;
+    }).length;
+    
+    let totalExternalLinks = 0;
+    pages.forEach(p => {
+      const externalLinkIssues = p.issues.filter(i => 
+        i.category === "Links & canonical" && 
+        (i.title === "Eksterne links" || i.title === "Eksterne links mangler rel-attributter")
+      );
+      externalLinkIssues.forEach(issue => {
+        const match = issue.message.match(/(\d+)\s+eksterne links/);
+        if (match) totalExternalLinks += parseInt(match[1], 10);
+      });
+    });
     
     const eeatScore = [
       hasAuthor ? 1 : 0,
@@ -106,6 +137,12 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
       aboutPage: hasAboutPage,
       contactInfo: hasContactInfo,
       score: Math.round((eeatScore / 6) * 100),
+      pagesWithAuthor,
+      pagesWithSchema,
+      externalCitations: totalExternalLinks,
+      pagesWithOpenGraph,
+      pagesWithHttps,
+      pagesWithSufficientContent,
     };
   }
 
@@ -173,10 +210,10 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
   const overallScore = total > 0 ? Math.round((passed / total) * 100) : 0;
   const improvementSuggestions = buildSuggestions(aggregated, byKey);
   
-  // Aggreger EEAT overordnet (over hele sitet)
+  // Aggreger EEAT overordnet (over hele sitet) med trust signals metrics
   const allEeatData = pages.map(p => p.eeat).filter((e): e is NonNullable<typeof e> => e !== undefined);
   let aggregatedEeat: FullSiteResult["eeat"] | undefined;
-  if (allEeatData.length > 0) {
+  if (allEeatData.length > 0 || pages.length > 0) {
     const hasAuthor = allEeatData.some(e => e.author);
     const hasAuthorBio = allEeatData.some(e => e.authorBio);
     const hasExpertise = allEeatData.some(e => e.expertise);
@@ -188,6 +225,37 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
     const authorCounts = new Map<string, number>();
     authors.forEach(a => authorCounts.set(a, (authorCounts.get(a) || 0) + 1));
     const mostCommonAuthor = Array.from(authorCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+    
+    // Beregn trust signals metrics
+    const pagesWithAuthor = pages.filter(p => p.eeat?.author).length;
+    const pagesWithSchema = pages.filter(p => {
+      const schemaIssues = p.issues.filter(i => i.category === "Strukturerede data" && i.severity === "pass");
+      return schemaIssues.length > 0;
+    }).length;
+    const pagesWithOpenGraph = pages.filter(p => {
+      const ogIssues = p.issues.filter(i => i.category === "Social (OG)" && i.severity === "pass");
+      return ogIssues.length >= 2;
+    }).length;
+    const pagesWithHttps = pages.filter(p => {
+      const httpsIssues = p.issues.filter(i => i.category === "Sikkerhed" && i.title === "HTTPS" && i.severity === "pass");
+      return httpsIssues.length > 0;
+    }).length;
+    const pagesWithSufficientContent = pages.filter(p => {
+      const contentIssues = p.issues.filter(i => i.category === "Indhold" && (i.title === "Tekstmængde" || i.title === "God tekstmængde"));
+      return contentIssues.length > 0;
+    }).length;
+    
+    let totalExternalLinks = 0;
+    pages.forEach(p => {
+      const externalLinkIssues = p.issues.filter(i => 
+        i.category === "Links & canonical" && 
+        (i.title === "Eksterne links" || i.title === "Eksterne links mangler rel-attributter")
+      );
+      externalLinkIssues.forEach(issue => {
+        const match = issue.message.match(/(\d+)\s+eksterne links/);
+        if (match) totalExternalLinks += parseInt(match[1], 10);
+      });
+    });
     
     const eeatScore = [
       hasAuthor ? 1 : 0,
@@ -206,6 +274,12 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
       aboutPage: hasAboutPage,
       contactInfo: hasContactInfo,
       score: Math.round((eeatScore / 6) * 100),
+      pagesWithAuthor,
+      pagesWithSchema,
+      externalCitations: totalExternalLinks,
+      pagesWithOpenGraph,
+      pagesWithHttps,
+      pagesWithSufficientContent,
     };
   }
 

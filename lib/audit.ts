@@ -57,6 +57,13 @@ export interface FullSiteResult {
     aboutPage?: boolean;
     contactInfo?: boolean;
     score?: number;
+    // Trust signals metrics
+    pagesWithAuthor?: number;
+    pagesWithSchema?: number;
+    externalCitations?: number;
+    pagesWithOpenGraph?: number;
+    pagesWithHttps?: number;
+    pagesWithSufficientContent?: number;
   };
 }
 
