@@ -1,9 +1,9 @@
 /**
  * Hent alle URLs fra hele sitemap (index → alle child sitemaps → loc).
- * Returnerer alle fundne URLs (op til MAX_URLS_TO_RETURN). Frontend auditerer dem i batches.
+ * Returnerer alle fundne URLs. Frontend auditerer dem i batches.
  */
 
-const MAX_URLS_TO_RETURN = 5000;
+const MAX_URLS_TO_RETURN = 50000; // Høj grænse for at dække meget store sites
 const FETCH_TIMEOUT = 8000;
 
 async function fetchText(url: string): Promise<string> {
@@ -44,53 +44,45 @@ export async function getUrlsFromSitemap(origin: string): Promise<SitemapResult>
 
   try {
     const indexXml = await fetchText(indexUrl);
-    const childSitemaps = extractLocFromXml(indexXml).filter(
+    // Find alle sitemaps (både direkte URLs og child sitemaps)
+    const allSitemapUrls = extractLocFromXml(indexXml);
+    
+    // Hvis der er child sitemaps (indeholder "sitemap" i URL), crawler vi dem
+    // Ellers er URLs direkte i index-sitemap
+    const childSitemaps = allSitemapUrls.filter(
       (u) => u.includes("sitemap") && !u.includes("/no/")
     );
-    const pagesFirst = childSitemaps.sort((a, b) => {
-      if (a.includes("pages")) return -1;
-      if (b.includes("pages")) return 1;
-      if (a.includes("collections")) return 1;
-      if (a.includes("products")) return -1;
-      return 0;
-    });
-
-    for (const sitemapUrl of pagesFirst) {
-      if (allUrls.length >= MAX_URLS_TO_RETURN) break;
-      try {
-        const xml = await fetchText(sitemapUrl);
-        const urls = extractLocFromXml(xml);
-        for (const u of urls) {
-          if (!seen.has(u) && (u.startsWith(origin) || u.startsWith("http"))) {
-            seen.add(u);
-            allUrls.push(u);
-            if (allUrls.length >= MAX_URLS_TO_RETURN) break;
-          }
-        }
-      } catch {
-        //
-      }
-    }
-
-    if (allUrls.length < MAX_URLS_TO_RETURN) {
+    
+    if (childSitemaps.length > 0) {
+      // Crawl alle child sitemaps systematisk
       for (const sitemapUrl of childSitemaps) {
         if (allUrls.length >= MAX_URLS_TO_RETURN) break;
         try {
           const xml = await fetchText(sitemapUrl);
           const urls = extractLocFromXml(xml);
           for (const u of urls) {
-            if (!seen.has(u)) {
+            if (!seen.has(u) && (u.startsWith(origin) || u.startsWith("http"))) {
               seen.add(u);
               allUrls.push(u);
               if (allUrls.length >= MAX_URLS_TO_RETURN) break;
             }
           }
-        } catch {
-          //
+        } catch (e) {
+          console.warn(`Kunne ikke hente sitemap: ${sitemapUrl}`, e);
+        }
+      }
+    } else {
+      // Hvis ingen child sitemaps, så er URLs direkte i index
+      for (const u of allSitemapUrls) {
+        if (!seen.has(u) && (u.startsWith(origin) || u.startsWith("http"))) {
+          seen.add(u);
+          allUrls.push(u);
+          if (allUrls.length >= MAX_URLS_TO_RETURN) break;
         }
       }
     }
-  } catch {
+  } catch (e) {
+    console.warn("Kunne ikke hente sitemap index, bruger kun forsiden", e);
     allUrls.push(origin + "/");
   }
 
@@ -99,6 +91,11 @@ export async function getUrlsFromSitemap(origin: string): Promise<SitemapResult>
   const home = origin + "/";
   // Forside først, derefter resten (til batch-audit bruger frontend hele listen)
   const ordered = unique.includes(home) ? [home, ...unique.filter((u) => u !== home)] : unique;
+
+  // Log hvis vi ramte grænsen
+  if (allUrls.length >= MAX_URLS_TO_RETURN) {
+    console.warn(`⚠️ Sitemap crawl nåede grænsen på ${MAX_URLS_TO_RETURN} URLs. Der kan være flere sider i sitemappen.`);
+  }
 
   return {
     allUrls: ordered,
