@@ -29,7 +29,9 @@ function extractLocFromXml(xml: string): string[] {
 export interface SitemapResult {
   /** Alle URLs fra hele sitemappet (op til MAX_URLS_TO_RETURN) */
   allUrls: string[];
-  /** Antal URLs der skal auditeres (forside + repræsentativt udpluk) */
+  /** Samme som allUrls – til brug i API/frontend */
+  urls: string[];
+  /** URLs der skal auditeres (samme som urls ved fuld crawl) */
   urlsToAudit: string[];
   /** Samlet antal URLs fundet i sitemap */
   totalInSitemap: number;
