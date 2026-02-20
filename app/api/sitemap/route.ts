@@ -12,6 +12,10 @@ export async function GET(req: NextRequest) {
       totalInSitemap,
     });
   } catch (e) {
-    return Response.json({ error: String(e) }, { status: 500 });
+    const message = e instanceof Error ? e.message : String(e);
+    const friendly = message.includes("fetch") || message.includes("network")
+      ? "Kunne ikke hente sitemap. Tjek at domænet er korrekt og at /sitemap.xml findes."
+      : message;
+    return Response.json({ error: friendly }, { status: 500 });
   }
 }

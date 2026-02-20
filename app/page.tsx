@@ -95,10 +95,11 @@ export default function SEOAuditPage() {
     try {
       if (fullSite) {
         const sitemapRes = await fetch(`/api/sitemap?url=${encodeURIComponent(domain)}`);
-        const sitemapData = await sitemapRes.json();
-        if (!sitemapRes.ok) throw new Error(sitemapData.error || "Kunne ikke hente sitemap");
-        const allUrls: string[] = sitemapData.urls ?? sitemapData.urlsToAudit ?? [];
-        const totalInSitemap = sitemapData.totalInSitemap ?? allUrls.length;
+        const sitemapData = await sitemapRes.json().catch(() => ({}));
+        if (!sitemapRes.ok) throw new Error(sitemapData?.error || "Kunne ikke hente sitemap");
+        const rawUrls = sitemapData.urls ?? sitemapData.urlsToAudit ?? sitemapData.allUrls;
+        const allUrls: string[] = Array.isArray(rawUrls) ? rawUrls : [];
+        const totalInSitemap = typeof sitemapData.totalInSitemap === "number" ? sitemapData.totalInSitemap : allUrls.length;
         setProgress(`Sitemap: ${allUrls.length} URLs. Starter audit…`);
         if (allUrls.length === 0) {
           const fallback = await fetch("/api/audit", {
@@ -106,8 +107,9 @@ export default function SEOAuditPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ url: domain, fullSite: true }),
           });
-          const fallbackData = await fallback.json();
-          if (!fallback.ok) throw new Error(fallbackData.error || "Audit fejlede");
+          const fallbackData = await fallback.json().catch(() => ({}));
+          if (!fallback.ok) throw new Error(fallbackData?.error || "Audit fejlede");
+          if (fallbackData?.error) throw new Error(fallbackData.error);
           setResult(fallbackData);
         } else {
           const batches: FullSiteResult[] = [];
@@ -121,8 +123,9 @@ export default function SEOAuditPage() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ urlBatch: chunk, origin }),
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Batch audit fejlede");
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || "Batch audit fejlede");
+            if (data?.error) throw new Error(data.error);
             batches.push(data);
           }
           setProgress("Samler resultater…");
@@ -135,13 +138,16 @@ export default function SEOAuditPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url: domain, fullSite: false }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Audit fejlede");
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || "Audit fejlede");
+        if (data?.error) throw new Error(data.error);
         setResult(data);
       }
       setTab("overview");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Noget gik galt");
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message || "Noget gik galt");
+      console.error("SEO Audit error:", e);
     } finally {
       setLoading(false);
       setProgress(null);
@@ -151,7 +157,7 @@ export default function SEOAuditPage() {
   const full = result && isFullSiteResult(result) ? result : null;
   const single = result && !isFullSiteResult(result) ? result : null;
 
-  const issues = full ? full.aggregated : single ? single.issues : [];
+  const issues: AuditIssue[] = full ? (full.aggregated ?? []) : single ? (single.issues ?? []) : [];
   const byPillar = (iss: AuditIssue[]) => {
     if (pillarFilter === "all") return iss;
     return iss.filter((i) => getPillarForCategory(i.category) === pillarFilter);
@@ -162,8 +168,9 @@ export default function SEOAuditPage() {
   const errors = issues.filter((i) => i.severity === "error").length;
   const warnings = issues.filter((i) => i.severity === "warning").length;
   const passed = issues.filter((i) => i.severity === "pass").length;
-  const score = full ? full.overallScore : single ? single.score : 0;
-  const categories = full ? full.categories : single ? single.categories : {};
+  const score = full ? (full.overallScore ?? 0) : single ? (single.score ?? 0) : 0;
+  const categories: Record<string, { passed: number; failed: number; warnings: number }> =
+    (full ? full.categories : single ? single.categories : undefined) ?? {};
 
   const pillarCategories: Record<SEOPillar, Record<string, { passed: number; failed: number; warnings: number }>> = {
     "Teknisk SEO": {},
@@ -187,21 +194,25 @@ export default function SEOAuditPage() {
       return "Andet";
     }
   };
-  const filteredPages = full?.pages ?? [];
+  const filteredPages = Array.isArray(full?.pages) ? full.pages : [];
   const searchLower = searchQuery.trim().toLowerCase();
   const searchedPages =
     searchLower === ""
       ? filteredPages
       : filteredPages.filter(
           (p) =>
-            p.url.toLowerCase().includes(searchLower) ||
-            pageCategory(p.url).toLowerCase().includes(searchLower)
+            (p?.url ?? "").toLowerCase().includes(searchLower) ||
+            pageCategory(p?.url ?? "").toLowerCase().includes(searchLower)
         );
   const sortedPages = [...searchedPages].sort((a, b) => {
-    if (sortPagesBy === "score-asc") return a.score - b.score;
-    if (sortPagesBy === "score-desc") return b.score - a.score;
-    if (sortPagesBy === "url") return a.url.localeCompare(b.url);
-    return pageCategory(a.url).localeCompare(pageCategory(b.url)) || a.url.localeCompare(b.url);
+    const scoreA = typeof a?.score === "number" ? a.score : 0;
+    const scoreB = typeof b?.score === "number" ? b.score : 0;
+    const urlA = a?.url ?? "";
+    const urlB = b?.url ?? "";
+    if (sortPagesBy === "score-asc") return scoreA - scoreB;
+    if (sortPagesBy === "score-desc") return scoreB - scoreA;
+    if (sortPagesBy === "url") return urlA.localeCompare(urlB);
+    return pageCategory(urlA).localeCompare(pageCategory(urlB)) || urlA.localeCompare(urlB);
   });
 
   const suggestionsFilteredByPillar =
@@ -519,16 +530,16 @@ export default function SEOAuditPage() {
                 )}
               </div>
               <div className="space-y-2">
-                {sortedPages.map((p) => (
+                {sortedPages.map((p, idx) => (
                   <div
-                    key={p.url}
+                    key={p?.url ?? `page-${idx}`}
                     className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-4"
                   >
                     <div className="min-w-0 flex-1">
-                      <span className="text-xs font-medium text-slate-400">{pageCategory(p.url)}</span>
-                      <span className="ml-2 truncate text-sm text-slate-700">{p.url}</span>
+                      <span className="text-xs font-medium text-slate-400">{pageCategory(p?.url ?? "")}</span>
+                      <span className="ml-2 truncate text-sm text-slate-700">{p?.url ?? ""}</span>
                     </div>
-                    <span className="font-semibold text-slate-800">{p.score}%</span>
+                    <span className="font-semibold text-slate-800">{typeof p?.score === "number" ? p.score : 0}%</span>
                   </div>
                 ))}
               </div>
