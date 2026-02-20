@@ -35,6 +35,7 @@ function mergeBatchResults(
   const aggregated: AuditIssue[] = Array.from(byKey.values()).map(({ pages: p, ...rest }) => ({
     ...rest,
     pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
+    affectedPages: p.length > 0 ? p : undefined,
   }));
   const categories: Record<string, { passed: number; failed: number; warnings: number }> = {};
   for (const i of aggregated) {
@@ -91,6 +92,9 @@ function SEOAuditPageContent() {
   const [pillarFilter, setPillarFilter] = useState<string>("all");
   const [pageNum, setPageNum] = useState(1);
   const ITEMS_PER_PAGE = 25;
+  const [selectedIssue, setSelectedIssue] = useState<AuditIssue | null>(null);
+  const [issueSearchQuery, setIssueSearchQuery] = useState("");
+  const [issueSortBy, setIssueSortBy] = useState<"severity" | "category" | "title" | "pages">("severity");
 
   useEffect(() => {
     const pillar = searchParams.get("pillar");
@@ -219,7 +223,36 @@ function SEOAuditPageContent() {
   };
   const bySeverity =
     filter === "all" ? (iss: AuditIssue[]) => iss : (iss: AuditIssue[]) => iss.filter((i) => i.severity === filter);
-  const filtered = bySeverity(byPillar(issues));
+  const filteredIssues = bySeverity(byPillar(issues));
+  
+  // Søg og sorter issues
+  const issueSearchLower = issueSearchQuery.trim().toLowerCase();
+  const searchedIssues = issueSearchLower === ""
+    ? filteredIssues
+    : filteredIssues.filter(
+        (i) =>
+          i.title.toLowerCase().includes(issueSearchLower) ||
+          i.category.toLowerCase().includes(issueSearchLower) ||
+          i.message.toLowerCase().includes(issueSearchLower) ||
+          (i.affectedPages && i.affectedPages.some((p) => p.toLowerCase().includes(issueSearchLower)))
+      );
+  
+  const sortedIssues = [...searchedIssues].sort((a, b) => {
+    if (issueSortBy === "severity") {
+      const order: Record<Severity, number> = { error: 0, warning: 1, pass: 2 };
+      return order[a.severity] - order[b.severity];
+    }
+    if (issueSortBy === "category") return a.category.localeCompare(b.category);
+    if (issueSortBy === "title") return a.title.localeCompare(b.title);
+    if (issueSortBy === "pages") {
+      const aPages = a.affectedPages?.length ?? (a.pageUrl?.includes(" sider") ? parseInt(a.pageUrl) : 1);
+      const bPages = b.affectedPages?.length ?? (b.pageUrl?.includes(" sider") ? parseInt(b.pageUrl) : 1);
+      return bPages - aPages; // Flest sider først
+    }
+    return 0;
+  });
+  
+  const filtered = sortedIssues;
   const errors = issues.filter((i) => i.severity === "error").length;
   const warnings = issues.filter((i) => i.severity === "warning").length;
   const passed = issues.filter((i) => i.severity === "pass").length;
@@ -552,56 +585,106 @@ function SEOAuditPageContent() {
 
           {(tab === "issues" || !full) && (
             <>
-              <div className="mt-6 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setFilter("all")}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "all" ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-700"}`}
-                >
-                  Alle
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilter("error")}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "error" ? "bg-red-600 text-white" : "bg-red-100 text-red-800"}`}
-                >
-                  Fejl
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilter("warning")}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "warning" ? "bg-amber-600 text-white" : "bg-amber-100 text-amber-800"}`}
-                >
-                  Advarsler
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilter("pass")}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "pass" ? "bg-green-600 text-white" : "bg-green-100 text-green-800"}`}
-                >
-                  OK
-                </button>
+              <div className="mt-6 flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFilter("all")}
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "all" ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-700"}`}
+                  >
+                    Alle ({issues.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilter("error")}
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "error" ? "bg-red-600 text-white" : "bg-red-100 text-red-800"}`}
+                  >
+                    Fejl ({errors})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilter("warning")}
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "warning" ? "bg-amber-600 text-white" : "bg-amber-100 text-amber-800"}`}
+                  >
+                    Advarsler ({warnings})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilter("pass")}
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === "pass" ? "bg-green-600 text-white" : "bg-green-100 text-green-800"}`}
+                  >
+                    OK ({passed})
+                  </button>
+                </div>
+                <input
+                  type="search"
+                  placeholder="Søg i fejl…"
+                  value={issueSearchQuery}
+                  onChange={(e) => setIssueSearchQuery(e.target.value)}
+                  className="ml-auto w-48 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  Sorter:
+                  <select
+                    value={issueSortBy}
+                    onChange={(e) => setIssueSortBy(e.target.value as typeof issueSortBy)}
+                    className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  >
+                    <option value="severity">Alvorlighed</option>
+                    <option value="category">Kategori</option>
+                    <option value="title">Titel</option>
+                    <option value="pages">Antal sider</option>
+                  </select>
+                </label>
               </div>
 
+              {issueSearchQuery && (
+                <p className="mt-2 text-sm text-slate-500">
+                  {sortedIssues.length} af {filteredIssues.length} fejl matcher søgningen
+                </p>
+              )}
+
               <div className="mt-6 space-y-3">
-                {filtered.map((issue: AuditIssue) => (
-                  <div
-                    key={issue.id}
-                    className={`rounded-lg border p-4 ${severityStyles[issue.severity]}`}
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded px-2 py-0.5 text-xs font-semibold uppercase">
-                        {severityLabels[issue.severity]}
-                      </span>
-                      <span className="text-sm text-slate-600">{issue.category}</span>
-                      {issue.pageUrl && (
-                        <span className="text-xs text-slate-500">
-                          {issue.pageUrl}
+                {filtered.map((issue: AuditIssue) => {
+                  const affectedCount = issue.affectedPages?.length ?? (issue.pageUrl?.includes(" sider") ? parseInt(issue.pageUrl) : (issue.pageUrl ? 1 : 0));
+                  return (
+                    <div
+                      key={issue.id}
+                      className={`rounded-lg border p-4 transition hover:shadow-md cursor-pointer ${severityStyles[issue.severity]}`}
+                      onClick={() => setSelectedIssue(issue)}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded px-2 py-0.5 text-xs font-semibold uppercase">
+                          {severityLabels[issue.severity]}
                         </span>
+                        <span className="text-sm text-slate-600">{issue.category}</span>
+                        {affectedCount > 0 && (
+                          <span className="text-xs font-medium text-slate-700">
+                            {affectedCount} side{affectedCount !== 1 ? "r" : ""}
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="mt-2 font-semibold">{issue.title}</h3>
+                      <p className="mt-1 text-sm opacity-90">{issue.message}</p>
+                      {issue.affectedPages && issue.affectedPages.length > 0 && issue.affectedPages.length <= 5 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {issue.affectedPages.map((url) => (
+                            <Link
+                              key={url}
+                              href={`/page/${encodeURIComponent(url)}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-xs text-blue-600 hover:underline"
+                            >
+                              {url}
+                            </Link>
+                          ))}
+                        </div>
                       )}
-                    </div>
-                    <h3 className="mt-2 font-semibold">{issue.title}</h3>
-                    <p className="mt-1 text-sm opacity-90">{issue.message}</p>
+                      {issue.affectedPages && issue.affectedPages.length > 5 && (
+                        <p className="mt-2 text-xs text-slate-600">
+                          Klik for at se alle {issue.affectedPages.length} berørte sider →
+                        </p>
+                      )}
                     {issue.value && (
                       <div className="mt-2 rounded bg-white/50 px-2 py-1.5 text-xs">
                         {issue.category === "Billeder" && issue.title.includes("alt-tekst") ? (
@@ -626,10 +709,77 @@ function SEOAuditPageContent() {
                         → {issue.recommendation}
                       </p>
                     )}
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
+              {filtered.length === 0 && (
+                <p className="mt-6 text-center text-slate-500">
+                  Ingen fund med valgt filter{sortedIssues.length !== filteredIssues.length ? " og søgning" : ""}.
+                </p>
+              )}
             </>
+          )}
+
+          {/* Modal for at vise alle berørte sider for en fejl */}
+          {selectedIssue && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+              onClick={() => setSelectedIssue(null)}
+            >
+              <div
+                className="max-h-[80vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-slate-800">{selectedIssue.title}</h2>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIssue(null)}
+                    className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  <span className={`rounded px-2 py-1 text-xs font-semibold uppercase ${severityStyles[selectedIssue.severity]}`}>
+                    {severityLabels[selectedIssue.severity]}
+                  </span>
+                  <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">{selectedIssue.category}</span>
+                  {selectedIssue.affectedPages && (
+                    <span className="rounded bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800">
+                      {selectedIssue.affectedPages.length} side{selectedIssue.affectedPages.length !== 1 ? "r" : ""} berørt
+                    </span>
+                  )}
+                </div>
+                <p className="mb-4 text-sm text-slate-700">{selectedIssue.message}</p>
+                {selectedIssue.recommendation && (
+                  <p className="mb-4 text-sm italic text-slate-600">→ {selectedIssue.recommendation}</p>
+                )}
+                {selectedIssue.value && (
+                  <div className="mb-4 rounded bg-slate-50 p-3 text-xs">
+                    <span className="font-medium text-slate-700">Værdi:</span>
+                    <p className="mt-1 break-all">{selectedIssue.value}</p>
+                  </div>
+                )}
+                {selectedIssue.affectedPages && selectedIssue.affectedPages.length > 0 && (
+                  <div>
+                    <h3 className="mb-2 font-semibold text-slate-800">Berørte sider:</h3>
+                    <div className="space-y-1">
+                      {selectedIssue.affectedPages.map((pageUrl) => (
+                        <Link
+                          key={pageUrl}
+                          href={`/page/${encodeURIComponent(pageUrl)}`}
+                          className="block rounded border border-slate-200 bg-white p-2 text-sm text-blue-600 hover:bg-slate-50 hover:underline"
+                        >
+                          {pageUrl}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {tab === "pages" && full && (

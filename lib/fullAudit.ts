@@ -56,6 +56,7 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
   const aggregated: AuditIssue[] = Array.from(byKey.values()).map(({ pages: p, ...rest }) => ({
     ...rest,
     pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
+    affectedPages: p.length > 0 ? p : undefined,
   }));
 
   const categories: Record<string, { passed: number; failed: number; warnings: number }> = {};
@@ -119,6 +120,7 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
   const aggregated: AuditIssue[] = Array.from(byKey.values()).map(({ pages: p, ...rest }) => ({
     ...rest,
     pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
+    affectedPages: p.length > 0 ? p : undefined,
   }));
 
   const categories: Record<string, { passed: number; failed: number; warnings: number }> = {};

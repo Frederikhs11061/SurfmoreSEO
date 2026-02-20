@@ -10,7 +10,8 @@ export interface AuditIssue {
   message: string;
   value?: string;
   recommendation?: string;
-  pageUrl?: string;
+  pageUrl?: string; // Enkelt side URL eller "X sider"
+  affectedPages?: string[]; // Liste af alle sider med denne fejl
 }
 
 export interface AuditResult {
