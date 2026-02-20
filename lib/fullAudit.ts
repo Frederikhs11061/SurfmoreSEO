@@ -7,7 +7,7 @@ import {
 } from "./audit";
 import { buildSuggestionsFromAggregated } from "./suggestions";
 
-const BATCH_SIZE = 25;
+const BATCH_SIZE = 50; // Øget fra 25 for hurtigere audit
 
 function buildSuggestions(
   aggregated: AuditIssue[],
@@ -80,12 +80,12 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
 /** Auditer en konkret liste af URLs (batch). Bruges når frontend henter hele sitemap og sender chunks. */
 export async function runBatchAudit(urls: string[], origin: string): Promise<FullSiteResult> {
   const toAudit = urls.slice(0, BATCH_SIZE);
-  const pages: AuditResult[] = [];
+  // Kør audits parallelt for hurtigere gennemgang
+  const results = await Promise.all(toAudit.map((url) => runAudit(url, url)));
+  const pages: AuditResult[] = results;
   const allIssues: AuditIssue[] = [];
 
-  for (const url of toAudit) {
-    const result = await runAudit(url, url);
-    pages.push(result);
+  for (const result of results) {
     for (const issue of result.issues) {
       allIssues.push({ ...issue, pageUrl: result.url });
     }

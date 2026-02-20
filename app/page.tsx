@@ -5,7 +5,8 @@ import type { AuditResult, AuditIssue, Severity, FullSiteResult, ImprovementSugg
 import { buildSuggestionsFromAggregated } from "@/lib/suggestions";
 import { getPillarForCategory, SEO_PILLARS, type SEOPillar } from "@/lib/seoPillars";
 
-const BATCH_SIZE = 25;
+const BATCH_SIZE = 50; // Øget fra 25 for hurtigere audit
+const CONCURRENT_BATCHES = 5; // Kør 5 batches parallelt
 
 function mergeBatchResults(
   batches: FullSiteResult[],
@@ -114,19 +115,31 @@ export default function SEOAuditPage() {
         } else {
           const batches: FullSiteResult[] = [];
           const totalBatches = Math.ceil(allUrls.length / BATCH_SIZE);
+          const chunks: string[][] = [];
           for (let i = 0; i < allUrls.length; i += BATCH_SIZE) {
-            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-            setProgress(`Auditerer sider ${i + 1}–${Math.min(i + BATCH_SIZE, allUrls.length)} af ${allUrls.length} (batch ${batchNum}/${totalBatches})…`);
-            const chunk = allUrls.slice(i, i + BATCH_SIZE);
-            const res = await fetch("/api/audit", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ urlBatch: chunk, origin }),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data?.error || "Batch audit fejlede");
-            if (data?.error) throw new Error(data.error);
-            batches.push(data);
+            chunks.push(allUrls.slice(i, i + BATCH_SIZE));
+          }
+          // Kør batches parallelt i grupper af CONCURRENT_BATCHES
+          for (let i = 0; i < chunks.length; i += CONCURRENT_BATCHES) {
+            const group = chunks.slice(i, i + CONCURRENT_BATCHES);
+            const batchStart = i + 1;
+            const batchEnd = Math.min(i + CONCURRENT_BATCHES, chunks.length);
+            setProgress(`Auditerer batches ${batchStart}–${batchEnd} af ${totalBatches} (${allUrls.length} sider totalt)…`);
+            const groupResults = await Promise.all(
+              group.map(async (chunk, idx) => {
+                const batchNum = i + idx + 1;
+                const res = await fetch("/api/audit", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ urlBatch: chunk, origin }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data?.error || `Batch ${batchNum} fejlede`);
+                if (data?.error) throw new Error(`Batch ${batchNum}: ${data.error}`);
+                return data;
+              })
+            );
+            batches.push(...groupResults);
           }
           setProgress("Samler resultater…");
           const merged = mergeBatchResults(batches, totalInSitemap, origin);
