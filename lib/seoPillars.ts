@@ -16,6 +16,7 @@ export const categoryToPillar: Record<string, SEOPillar> = {
   "Strukturerede data": "On-page SEO",
   "Social (OG)": "On-page SEO",
   "Social (Twitter)": "On-page SEO",
+  EEAT: "On-page SEO",
   "Links & canonical": "Link building",
 };
 

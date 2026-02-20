@@ -84,7 +84,7 @@ function SEOAuditPageContent() {
   const [result, setResult] = useState<AuditResult | FullSiteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Severity | "all">("all");
-  const [tab, setTab] = useState<"overview" | "suggestions" | "issues" | "pages">("overview");
+  const [tab, setTab] = useState<"overview" | "suggestions" | "issues" | "pages" | "eeat">("overview");
   const [progress, setProgress] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortPagesBy, setSortPagesBy] = useState<"score-asc" | "score-desc" | "url" | "category">("score-asc");
@@ -99,6 +99,19 @@ function SEOAuditPageContent() {
       setTab("overview");
     }
   }, [searchParams]);
+
+  // Load gemt resultat fra localStorage ved mount
+  useEffect(() => {
+    const saved = localStorage.getItem(`seo-audit-${url}`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setResult(parsed);
+      } catch {
+        // Ignorer hvis parsing fejler
+      }
+    }
+  }, [url]);
 
   // Auto-start sitemap crawl når siden loader hvis URL er sat og fullSite er aktivt
   useEffect(() => {
@@ -169,6 +182,8 @@ function SEOAuditPageContent() {
           setProgress("Samler resultater…");
           const merged = mergeBatchResults(batches, totalInSitemap, origin);
           setResult(merged);
+          // Gem resultat i localStorage
+          localStorage.setItem(`seo-audit-${domain}`, JSON.stringify(merged));
         }
       } else {
         const res = await fetch("/api/audit", {
@@ -180,6 +195,8 @@ function SEOAuditPageContent() {
         if (!res.ok) throw new Error(data?.error || "Audit fejlede");
         if (data?.error) throw new Error(data.error);
         setResult(data);
+        // Gem også single-page resultat
+        localStorage.setItem(`seo-audit-${domain}`, JSON.stringify(data));
       }
       setTab("overview");
     } catch (e) {
@@ -447,6 +464,13 @@ function SEOAuditPageContent() {
                 >
                   Pr. side
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("eeat")}
+                  className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "eeat" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
+                >
+                  EEAT
+                </button>
               </div>
             </>
           )}
@@ -579,9 +603,23 @@ function SEOAuditPageContent() {
                     <h3 className="mt-2 font-semibold">{issue.title}</h3>
                     <p className="mt-1 text-sm opacity-90">{issue.message}</p>
                     {issue.value && (
-                      <p className="mt-2 truncate rounded bg-white/50 px-2 py-1 text-xs">
-                        {issue.value}
-                      </p>
+                      <div className="mt-2 rounded bg-white/50 px-2 py-1.5 text-xs">
+                        {issue.category === "Billeder" && issue.title.includes("alt-tekst") ? (
+                          <div>
+                            <span className="font-medium text-slate-700">Billeder uden alt:</span>
+                            <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                              {issue.value.split(", ").slice(0, 10).map((img, idx) => (
+                                <li key={idx} className="break-all">{img}</li>
+                              ))}
+                              {issue.value.split(", ").length > 10 && (
+                                <li className="text-slate-500">... og {issue.value.split(", ").length - 10} flere</li>
+                              )}
+                            </ul>
+                          </div>
+                        ) : (
+                          <p className="break-all">{issue.value}</p>
+                        )}
+                      </div>
                     )}
                     {issue.recommendation && (
                       <p className="mt-2 text-sm italic opacity-90">
@@ -692,6 +730,82 @@ function SEOAuditPageContent() {
                     </button>
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+
+          {tab === "eeat" && full && (
+            <div className="mt-6 space-y-4">
+              <h2 className="text-lg font-semibold text-slate-800">EEAT Oversigt (Experience, Expertise, Authoritativeness, Trustworthiness)</h2>
+              <p className="text-sm text-slate-600">
+                EEAT er Googles retningslinjer for kvalitetsindhold. Her er en oversigt over hvor godt sitet opfylder EEAT-kriterierne.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {full.pages.map((page) => {
+                  const eeat = page.eeat;
+                  if (!eeat) return null;
+                  const score = [
+                    eeat.author ? 1 : 0,
+                    eeat.authorBio ? 1 : 0,
+                    eeat.expertise ? 1 : 0,
+                    eeat.trustworthiness ? 1 : 0,
+                    eeat.aboutPage ? 1 : 0,
+                    eeat.contactInfo ? 1 : 0,
+                  ].reduce((a, b) => a + b, 0);
+                  const maxScore = 6;
+                  const pct = Math.round((score / maxScore) * 100);
+                  return (
+                    <div key={page.url} className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="truncate text-sm font-medium text-slate-700">{page.url}</span>
+                        <span className="text-sm font-semibold text-slate-800">{pct}%</span>
+                      </div>
+                      <div className="space-y-1.5 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className={eeat.author ? "text-green-600" : "text-red-600"}>
+                            {eeat.author ? "✓" : "✗"}
+                          </span>
+                          <span className="text-slate-600">Forfatter: {eeat.author || "Mangler"}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={eeat.authorBio ? "text-green-600" : "text-red-600"}>
+                            {eeat.authorBio ? "✓" : "✗"}
+                          </span>
+                          <span className="text-slate-600">Forfatterbiografi</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={eeat.expertise ? "text-green-600" : "text-red-600"}>
+                            {eeat.expertise ? "✓" : "✗"}
+                          </span>
+                          <span className="text-slate-600">Ekspertise-signaler</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={eeat.trustworthiness ? "text-green-600" : "text-red-600"}>
+                            {eeat.trustworthiness ? "✓" : "✗"}
+                          </span>
+                          <span className="text-slate-600">Troværdighed</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={eeat.aboutPage ? "text-green-600" : "text-red-600"}>
+                            {eeat.aboutPage ? "✓" : "✗"}
+                          </span>
+                          <span className="text-slate-600">Om-side link</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={eeat.contactInfo ? "text-green-600" : "text-red-600"}>
+                            {eeat.contactInfo ? "✓" : "✗"}
+                          </span>
+                          <span className="text-slate-600">Kontaktinformation</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {full.pages.filter((p) => !p.eeat).length > 0 && (
+                <p className="text-sm text-slate-500">
+                  {full.pages.filter((p) => !p.eeat).length} sider har ikke EEAT-data (måske ikke-2xx sider der blev sprunget over).
+                </p>
               )}
             </div>
           )}

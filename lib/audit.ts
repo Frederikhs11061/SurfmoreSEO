@@ -18,6 +18,15 @@ export interface AuditResult {
   issues: AuditIssue[];
   score: number;
   categories: Record<string, { passed: number; failed: number; warnings: number }>;
+  imagesWithoutAlt?: string[]; // Liste af billed-URLs uden alt-tekst
+  eeat?: {
+    author?: string;
+    authorBio?: boolean;
+    expertise?: boolean;
+    trustworthiness?: boolean;
+    aboutPage?: boolean;
+    contactInfo?: boolean;
+  };
 }
 
 export interface ImprovementSuggestion {
@@ -73,18 +82,20 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   const path = baseUrl.pathname;
 
   let html: string;
+  let httpStatus: number = 0;
   try {
     const res = await fetch(normalizeUrl, {
       headers: { "User-Agent": "SEO-Audit-Bot/1.0" },
     });
-    if (!res.ok) {
-      add(issues, "Teknisk", "error", "Siden svarer ikke", `HTTP ${res.status}`, undefined, "Tjek at URL er korrekt og siden er online.", pageUrl || normalizeUrl);
-      return { url: normalizeUrl, issues, score: 0, categories };
+    httpStatus = res.status;
+    // Skip sider der ikke er 2xx - returner null så batch audit kan springe dem over
+    if (!res.ok || res.status < 200 || res.status >= 300) {
+      return null as any; // Returner null så batch audit kan skip
     }
     html = await res.text();
   } catch (e) {
-    add(issues, "Teknisk", "error", "Kunne ikke hente siden", String(e), undefined, "Tjek netværk og at domænet er tilgængeligt.", pageUrl || normalizeUrl);
-    return { url: normalizeUrl, issues, score: 0, categories };
+    // Skip ved fejl også
+    return null as any;
   }
 
   const $ = cheerio.load(html);
@@ -171,11 +182,20 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
 
   // --- Billeder ---
   const imgs = $("img");
-  const imgsWithoutAlt = imgs.filter((_, el) => !$(el).attr("alt")).length;
+  const imagesWithoutAlt: string[] = [];
+  imgs.each((_, el) => {
+    const img = $(el);
+    const alt = img.attr("alt");
+    const src = img.attr("src") || img.attr("data-src") || "";
+    if (!alt || alt.trim() === "") {
+      imagesWithoutAlt.push(src || "ukendt kilde");
+    }
+  });
   const totalImgs = imgs.length;
   const imgsWithoutDimensions = imgs.filter((_, el) => !$(el).attr("width") && !$(el).attr("height")).length;
-  if (totalImgs > 0 && imgsWithoutAlt > 0) {
-    add(issues, "Billeder", "error", "Billeder uden alt-tekst", `${imgsWithoutAlt} af ${totalImgs} mangler alt.`, undefined, "Tilføj alt på alle billeder.", normalizeUrl);
+  if (totalImgs > 0 && imagesWithoutAlt.length > 0) {
+    const imgList = imagesWithoutAlt.slice(0, 5).join(", ") + (imagesWithoutAlt.length > 5 ? ` ... (+${imagesWithoutAlt.length - 5} flere)` : "");
+    add(issues, "Billeder", "error", "Billeder uden alt-tekst", `${imagesWithoutAlt.length} af ${totalImgs} mangler alt.`, imgList, "Tilføj alt på alle billeder.", normalizeUrl);
   } else if (totalImgs > 0) {
     add(issues, "Billeder", "pass", "Alt-tekst på billeder", `Alle ${totalImgs} har alt.`, undefined, undefined, normalizeUrl);
   }
@@ -194,8 +214,8 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   add(issues, "Links & canonical", "pass", "Links", `${internal} interne, ${external} eksterne.`, undefined, undefined, normalizeUrl);
 
   // --- Indholdslængde ---
-  const bodyText = $("body").text().replace(/\s+/g, " ").trim();
-  const wordCount = bodyText.split(/\s+/).filter(Boolean).length;
+  const bodyTextClean = $("body").text().replace(/\s+/g, " ").trim();
+  const wordCount = bodyTextClean.split(/\s+/).filter(Boolean).length;
   if (wordCount < 100) add(issues, "Indhold", "warning", "Lidt tekst", `Ca. ${wordCount} ord. Anbefaling: 300+ for indholdsrige sider.`, undefined, "Tilføj mere unikt indhold.", normalizeUrl);
   else if (wordCount < 300) add(issues, "Indhold", "pass", "Tekstmængde", `Ca. ${wordCount} ord.`, undefined, undefined, normalizeUrl);
   else add(issues, "Indhold", "pass", "God tekstmængde", `Ca. ${wordCount} ord.`, undefined, undefined, normalizeUrl);
@@ -235,6 +255,40 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   if (!normalizeUrl.startsWith("https://")) add(issues, "Sikkerhed", "error", "Ikke HTTPS", "Siden bruger ikke HTTPS.", undefined, "Aktiver SSL/HTTPS.", normalizeUrl);
   else add(issues, "Sikkerhed", "pass", "HTTPS", "Aktiveret.", undefined, undefined, normalizeUrl);
 
+  // --- EEAT (Experience, Expertise, Authoritativeness, Trustworthiness) ---
+  const bodyText = $("body").text().toLowerCase();
+  const author = $('meta[name="author"], [rel="author"], .author, [itemprop="author"]').first().text().trim() || 
+                 $('meta[property="article:author"]').attr("content") || "";
+  const hasAuthorBio = /biografi|om mig|about|author|forfatter/i.test(bodyText) || $(".author-bio, .author-info, [class*='author']").length > 0;
+  const hasExpertise = /ekspert|expert|erfaring|experience|kvalifikation|qualification/i.test(bodyText) || 
+                       $('[itemtype*="Person"], [itemtype*="Organization"]').length > 0;
+  const hasTrustworthiness = /kontakt|contact|adresse|address|cvr|cvr-nr|telefon|phone/i.test(bodyText) ||
+                              $('[itemtype*="ContactPoint"], .contact, [class*="contact"]').length > 0;
+  const hasAboutPage = $('a[href*="/om"], a[href*="/about"], a[href*="/om-os"]').length > 0;
+  const hasContactInfo = $('a[href*="mailto:"], a[href*="tel:"], [itemtype*="ContactPoint"]').length > 0;
+
+  const eeat = {
+    author: author || undefined,
+    authorBio: hasAuthorBio,
+    expertise: hasExpertise,
+    trustworthiness: hasTrustworthiness || hasContactInfo,
+    aboutPage: hasAboutPage,
+    contactInfo: hasContactInfo,
+  };
+
+  // EEAT issues
+  if (!author) add(issues, "EEAT", "warning", "Ingen forfatter angivet", "Manglende author meta eller rel=author.", undefined, "Tilføj forfatterinformation for bedre EEAT.", normalizeUrl);
+  else add(issues, "EEAT", "pass", "Forfatter angivet", author.slice(0, 50), undefined, undefined, normalizeUrl);
+  
+  if (!hasAuthorBio) add(issues, "EEAT", "warning", "Ingen forfatterbiografi", "Manglende information om forfatteren.", undefined, "Tilføj forfatterbiografi eller 'Om mig' sektion.", normalizeUrl);
+  else add(issues, "EEAT", "pass", "Forfatterbiografi", "Fundet", undefined, undefined, normalizeUrl);
+  
+  if (!hasExpertise) add(issues, "EEAT", "warning", "Begrænset ekspertise-signaler", "Manglende tegn på ekspertise.", undefined, "Tilføj information om ekspertise, kvalifikationer eller erfaring.", normalizeUrl);
+  else add(issues, "EEAT", "pass", "Ekspertise-signaler", "Fundet", undefined, undefined, normalizeUrl);
+  
+  if (!hasTrustworthiness && !hasContactInfo) add(issues, "EEAT", "warning", "Begrænset troværdighed", "Manglende kontaktinformation.", undefined, "Tilføj kontaktinformation, adresse eller CVR-nr.", normalizeUrl);
+  else add(issues, "EEAT", "pass", "Troværdighed", "Kontaktinfo fundet", undefined, undefined, normalizeUrl);
+
   // --- Kategorier & score ---
   for (const i of issues) {
     if (!categories[i.category]) categories[i.category] = { passed: 0, failed: 0, warnings: 0 };
@@ -246,5 +300,5 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   const passed = issues.filter((i) => i.severity === "pass").length;
   const score = total > 0 ? Math.round((passed / total) * 100) : 0;
 
-  return { url: normalizeUrl, issues, score, categories };
+  return { url: normalizeUrl, issues, score, categories, imagesWithoutAlt, eeat };
 }

@@ -25,10 +25,17 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
   const allIssues: AuditIssue[] = [];
 
   for (const url of urlsToAudit) {
-    const result = await runAudit(url, url);
-    pages.push(result);
-    for (const issue of result.issues) {
-      allIssues.push({ ...issue, pageUrl: result.url });
+    try {
+      const result = await runAudit(url, url);
+      if (result) {
+        // Skip null (ikke-2xx sider)
+        pages.push(result);
+        for (const issue of result.issues) {
+          allIssues.push({ ...issue, pageUrl: result.url });
+        }
+      }
+    } catch {
+      // Skip ved fejl
     }
   }
 
@@ -80,12 +87,19 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
 /** Auditer en konkret liste af URLs (batch). Bruges når frontend henter hele sitemap og sender chunks. */
 export async function runBatchAudit(urls: string[], origin: string): Promise<FullSiteResult> {
   const toAudit = urls.slice(0, BATCH_SIZE);
-  // Kør audits parallelt for hurtigere gennemgang
-  const results = await Promise.all(toAudit.map((url) => runAudit(url, url)));
-  const pages: AuditResult[] = results;
+  // Kør audits parallelt for hurtigere gennemgang - skip ikke-2xx sider (returnerer null)
+  const results = await Promise.all(toAudit.map(async (url) => {
+    try {
+      return await runAudit(url, url);
+    } catch {
+      return null; // Skip ved fejl
+    }
+  }));
+  // Filtrer null væk (sider der ikke var 2xx eller fejlede)
+  const pages: AuditResult[] = results.filter((r): r is AuditResult => r !== null);
   const allIssues: AuditIssue[] = [];
 
-  for (const result of results) {
+  for (const result of pages) {
     for (const issue of result.issues) {
       allIssues.push({ ...issue, pageUrl: result.url });
     }
