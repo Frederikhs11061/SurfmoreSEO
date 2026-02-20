@@ -5,7 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import type { AuditResult, AuditIssue, Severity } from "@/lib/audit";
 
 function ImageListComponent({ images }: { images: string }) {
-  const [showAll, setShowAll] = useState(false);
+  const [showUrls, setShowUrls] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   
   const imageList = images.split(", ").filter(img => img.trim());
   
@@ -27,7 +28,19 @@ function ImageListComponent({ images }: { images: string }) {
   });
   
   const uniqueUrls = Array.from(uniqueImages.values());
-  const displayCount = showAll ? uniqueUrls.length : Math.min(5, uniqueUrls.length);
+  
+  // Filtrer baseret på søgning
+  const filteredUrls = uniqueUrls.filter(img => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    try {
+      const url = new URL(img);
+      const filename = url.pathname.split("/").pop() || url.pathname;
+      return filename.toLowerCase().includes(query) || img.toLowerCase().includes(query);
+    } catch {
+      return img.toLowerCase().includes(query);
+    }
+  });
   
   return (
     <div className="mt-1">
@@ -35,53 +48,75 @@ function ImageListComponent({ images }: { images: string }) {
         <span className="font-medium text-slate-700">
           {uniqueUrls.length} unikke billeder uden alt-tekst
         </span>
-        {uniqueUrls.length > 5 && (
-          <button
-            onClick={() => setShowAll(!showAll)}
-            className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
-          >
-            {showAll ? "Vis færre" : `Vis alle (${uniqueUrls.length})`}
-          </button>
-        )}
+        <button
+          onClick={() => setShowUrls(!showUrls)}
+          className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium bg-blue-50 px-2 py-1 rounded"
+        >
+          {showUrls ? "Skjul URLs" : "Se URLs"}
+        </button>
       </div>
-      <div className="max-h-48 overflow-y-auto">
-        <ul className="space-y-1">
-          {uniqueUrls.slice(0, displayCount).map((img, idx) => {
-            try {
-              const url = new URL(img);
-              const filename = url.pathname.split("/").pop() || url.pathname;
-              return (
-                <li key={idx} className="flex items-center gap-2">
-                  <span className="text-slate-400">•</span>
-                  <a
-                    href={img}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 hover:underline truncate max-w-[400px]"
-                    title={img}
-                  >
-                    {filename}
-                  </a>
-                </li>
-              );
-            } catch {
-              return (
-                <li key={idx} className="flex items-center gap-2">
-                  <span className="text-slate-400">•</span>
-                  <a
-                    href={img}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 hover:underline truncate max-w-[400px]"
-                  >
-                    {img.length > 50 ? `${img.substring(0, 50)}...` : img}
-                  </a>
-                </li>
-              );
-            }
-          })}
-        </ul>
-      </div>
+      
+      {showUrls && (
+        <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3">
+          <div className="mb-2">
+            <input
+              type="search"
+              placeholder="Søg efter filnavn eller URL..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <ul className="space-y-1">
+              {filteredUrls.length === 0 ? (
+                <li className="text-xs text-slate-500 italic">Ingen resultater matcher søgningen</li>
+              ) : (
+                filteredUrls.map((img, idx) => {
+                  try {
+                    const url = new URL(img);
+                    const filename = url.pathname.split("/").pop() || url.pathname;
+                    return (
+                      <li key={idx} className="flex items-center gap-2">
+                        <span className="text-slate-400">•</span>
+                        <a
+                          href={img}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 hover:underline break-all text-xs"
+                          title={img}
+                        >
+                          {filename}
+                        </a>
+                        <span className="text-slate-400 text-xs">({img})</span>
+                      </li>
+                    );
+                  } catch {
+                    return (
+                      <li key={idx} className="flex items-center gap-2">
+                        <span className="text-slate-400">•</span>
+                        <a
+                          href={img}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 hover:underline break-all text-xs"
+                        >
+                          {img}
+                        </a>
+                      </li>
+                    );
+                  }
+                })
+              )}
+            </ul>
+          </div>
+          {filteredUrls.length > 0 && (
+            <div className="mt-2 text-xs text-slate-500">
+              Viser {filteredUrls.length} af {uniqueUrls.length} billeder
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
