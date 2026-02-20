@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import type { AuditResult, AuditIssue, Severity, FullSiteResult, ImprovementSuggestion } from "@/lib/audit";
 import { buildSuggestionsFromAggregated } from "@/lib/suggestions";
 import { getPillarForCategory, SEO_PILLARS, type SEOPillar } from "@/lib/seoPillars";
@@ -73,7 +75,9 @@ function isFullSiteResult(r: AuditResult | FullSiteResult): r is FullSiteResult 
   return "aggregated" in r && "pages" in r;
 }
 
-export default function SEOAuditPage() {
+function SEOAuditPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [url, setUrl] = useState("surfmore.dk");
   const [fullSite, setFullSite] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -85,6 +89,16 @@ export default function SEOAuditPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortPagesBy, setSortPagesBy] = useState<"score-asc" | "score-desc" | "url" | "category">("score-asc");
   const [pillarFilter, setPillarFilter] = useState<string>("all");
+  const [pageNum, setPageNum] = useState(1);
+  const ITEMS_PER_PAGE = 25;
+
+  useEffect(() => {
+    const pillar = searchParams.get("pillar");
+    if (pillar && SEO_PILLARS.includes(pillar as SEOPillar)) {
+      setPillarFilter(pillar);
+      setTab("issues");
+    }
+  }, [searchParams]);
 
   const run = async () => {
     setLoading(true);
@@ -228,6 +242,15 @@ export default function SEOAuditPage() {
     return pageCategory(urlA).localeCompare(pageCategory(urlB)) || urlA.localeCompare(urlB);
   });
 
+  const totalPages = Math.ceil(sortedPages.length / ITEMS_PER_PAGE);
+  const startIdx = (pageNum - 1) * ITEMS_PER_PAGE;
+  const endIdx = startIdx + ITEMS_PER_PAGE;
+  const paginatedPages = sortedPages.slice(startIdx, endIdx);
+
+  useEffect(() => {
+    if (pageNum > totalPages && totalPages > 0) setPageNum(1);
+  }, [totalPages, pageNum]);
+
   const suggestionsFilteredByPillar =
     full?.improvementSuggestions && pillarFilter !== "all"
       ? full.improvementSuggestions.filter((s) => getPillarForCategory(s.category) === pillarFilter)
@@ -322,7 +345,10 @@ export default function SEOAuditPage() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => setPillarFilter("all")}
+                    onClick={() => {
+                      setPillarFilter("all");
+                      router.push("/");
+                    }}
                     className={`rounded-full px-3 py-1.5 text-sm font-medium ${pillarFilter === "all" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"}`}
                   >
                     Alle
@@ -331,13 +357,22 @@ export default function SEOAuditPage() {
                     <button
                       key={p}
                       type="button"
-                      onClick={() => setPillarFilter(p)}
+                      onClick={() => {
+                        setPillarFilter(p);
+                        setTab("issues");
+                        router.push(`?pillar=${encodeURIComponent(p)}`);
+                      }}
                       className={`rounded-full px-3 py-1.5 text-sm font-medium ${pillarFilter === p ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"}`}
                     >
                       {p}
                     </button>
                   ))}
                 </div>
+                {pillarFilter !== "all" && (
+                  <span className="text-sm text-slate-500">
+                    Viser kun: {pillarFilter}
+                  </span>
+                )}
               </div>
               <div className="mt-6 flex flex-wrap gap-2 border-b border-slate-200">
                 <button
@@ -543,21 +578,73 @@ export default function SEOAuditPage() {
                 )}
               </div>
               <div className="space-y-2">
-                {sortedPages.map((p, idx) => (
-                  <div
+                {paginatedPages.map((p, idx) => (
+                  <Link
                     key={p?.url ?? `page-${idx}`}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-4"
+                    href={`/page/${encodeURIComponent(p?.url ?? "")}`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-4 transition hover:border-slate-400 hover:shadow-sm"
                   >
                     <div className="min-w-0 flex-1">
                       <span className="text-xs font-medium text-slate-400">{pageCategory(p?.url ?? "")}</span>
                       <span className="ml-2 truncate text-sm text-slate-700">{p?.url ?? ""}</span>
                     </div>
                     <span className="font-semibold text-slate-800">{typeof p?.score === "number" ? p.score : 0}%</span>
-                  </div>
+                  </Link>
                 ))}
               </div>
               {sortedPages.length === 0 && (
                 <p className="text-sm text-slate-500">Ingen sider matcher søgningen.</p>
+              )}
+              {totalPages > 1 && (
+                <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-slate-600">
+                    Side {pageNum} af {totalPages} ({sortedPages.length} sider totalt)
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPageNum((p) => Math.max(1, p - 1))}
+                      disabled={pageNum === 1}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      ← Forrige
+                    </button>
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageToShow: number;
+                      if (totalPages <= 5) {
+                        pageToShow = i + 1;
+                      } else if (pageNum <= 3) {
+                        pageToShow = i + 1;
+                      } else if (pageNum >= totalPages - 2) {
+                        pageToShow = totalPages - 4 + i;
+                      } else {
+                        pageToShow = pageNum - 2 + i;
+                      }
+                      return (
+                        <button
+                          key={pageToShow}
+                          type="button"
+                          onClick={() => setPageNum(pageToShow)}
+                          className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
+                            pageNum === pageToShow
+                              ? "border-slate-800 bg-slate-800 text-white"
+                              : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                          }`}
+                        >
+                          {pageToShow}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setPageNum((p) => Math.min(totalPages, p + 1))}
+                      disabled={pageNum === totalPages}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Næste →
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -568,5 +655,13 @@ export default function SEOAuditPage() {
         SEO Audit – tekniske checks på tværs af titel, meta, overskrifter, billeder, mobil, social, crawl og indhold. Ikke erstatning for Google Search Console.
       </footer>
     </div>
+  );
+}
+
+export default function SEOAuditPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-5xl px-4 py-8">Indlæser…</div>}>
+      <SEOAuditPageContent />
+    </Suspense>
   );
 }
