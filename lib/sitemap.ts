@@ -2,9 +2,78 @@
  * Hent alle URLs fra hele sitemap (index → alle child sitemaps → loc).
  * Returnerer alle fundne URLs. Frontend auditerer dem i batches.
  * Håndterer rekursive/nested sitemaps korrekt.
+ * Cacher sitemap data til fil for hurtigere genindlæsning.
  */
 
+import { promises as fs } from "fs";
+import { join } from "path";
+
 const FETCH_TIMEOUT = 8000;
+const CACHE_DIR = join(process.cwd(), ".cache");
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 timer
+
+async function ensureCacheDir() {
+  try {
+    await fs.mkdir(CACHE_DIR, { recursive: true });
+  } catch {
+    // Ignorer fejl hvis dir allerede findes
+  }
+}
+
+function getCachePath(origin: string): string {
+  const domain = origin.replace(/^https?:\/\//, "").replace(/[^a-z0-9]/gi, "_");
+  return join(CACHE_DIR, `sitemap_${domain}.json`);
+}
+
+interface CachedSitemap {
+  urls: string[];
+  totalInSitemap: number;
+  cachedAt: number;
+}
+
+async function loadCachedSitemap(origin: string): Promise<SitemapResult | null> {
+  try {
+    await ensureCacheDir();
+    const cachePath = getCachePath(origin);
+    const data = await fs.readFile(cachePath, "utf-8");
+    const cached: CachedSitemap = JSON.parse(data);
+    
+    // Tjek om cache er udløbet
+    const age = Date.now() - cached.cachedAt;
+    if (age > CACHE_TTL) {
+      return null; // Cache udløbet
+    }
+    
+    const home = origin + "/";
+    const ordered = cached.urls.includes(home) 
+      ? [home, ...cached.urls.filter((u) => u !== home)] 
+      : cached.urls;
+    
+    return {
+      allUrls: ordered,
+      urls: ordered,
+      urlsToAudit: ordered,
+      totalInSitemap: cached.totalInSitemap,
+    };
+  } catch {
+    return null; // Ingen cache eller fejl ved læsning
+  }
+}
+
+async function saveCachedSitemap(origin: string, result: SitemapResult): Promise<void> {
+  try {
+    await ensureCacheDir();
+    const cachePath = getCachePath(origin);
+    const cached: CachedSitemap = {
+      urls: result.allUrls,
+      totalInSitemap: result.totalInSitemap,
+      cachedAt: Date.now(),
+    };
+    await fs.writeFile(cachePath, JSON.stringify(cached, null, 2), "utf-8");
+  } catch {
+    // Ignorer fejl ved caching (ikke kritisk)
+  }
+}
 
 async function fetchText(url: string): Promise<string> {
   const ctrl = new AbortController();
@@ -85,16 +154,46 @@ async function crawlSitemapRecursive(
   }
 }
 
-export async function getUrlsFromSitemap(origin: string): Promise<SitemapResult> {
+export async function getUrlsFromSitemap(origin: string, useCache: boolean = true): Promise<SitemapResult> {
+  // Prøv at hente fra cache først
+  if (useCache) {
+    const cached = await loadCachedSitemap(origin);
+    if (cached) {
+      return cached;
+    }
+  }
+
   const indexUrl = `${origin}/sitemap.xml`;
   const allUrls: string[] = [];
   const seenUrls = new Set<string>();
   const seenSitemaps = new Set<string>();
 
   try {
+    // Crawl ALLE sitemaps rekursivt - ingen begrænsning
     await crawlSitemapRecursive(indexUrl, origin, seenUrls, seenSitemaps, allUrls);
+    
+    // Hvis vi ikke fandt nogen URLs, prøv også alternative sitemap paths
+    if (allUrls.length === 0) {
+      const alternativePaths = [
+        `${origin}/sitemap_index.xml`,
+        `${origin}/sitemaps.xml`,
+        `${origin}/sitemap1.xml`,
+      ];
+      
+      for (const altPath of alternativePaths) {
+        try {
+          await crawlSitemapRecursive(altPath, origin, seenUrls, seenSitemaps, allUrls);
+        } catch {
+          // Ignorer fejl ved alternative paths
+        }
+      }
+    }
   } catch (e) {
     console.warn("Kunne ikke hente sitemap index, bruger kun forsiden", e);
+  }
+
+  // Hvis vi stadig ikke har nogen URLs, tilføj forsiden
+  if (allUrls.length === 0) {
     const home = origin + "/";
     if (!seenUrls.has(home)) {
       allUrls.push(home);
@@ -108,10 +207,17 @@ export async function getUrlsFromSitemap(origin: string): Promise<SitemapResult>
   // Forside først, derefter resten (til batch-audit bruger frontend hele listen)
   const ordered = unique.includes(home) ? [home, ...unique.filter((u) => u !== home)] : unique;
 
-  return {
+  const result: SitemapResult = {
     allUrls: ordered,
     urls: ordered,
     urlsToAudit: ordered,
     totalInSitemap,
   };
+
+  // Gem i cache
+  if (useCache) {
+    await saveCachedSitemap(origin, result);
+  }
+
+  return result;
 }

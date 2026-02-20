@@ -189,20 +189,56 @@ export default function PageDetail() {
                     {issue.category === "Billeder" && issue.title.includes("alt-tekst") ? (
                       <div>
                         <span className="font-medium text-slate-700">Billeder uden alt-tekst:</span>
-                        <ul className="mt-1 ml-4 list-disc space-y-1 max-h-60 overflow-y-auto">
-                          {issue.value.split(", ").map((img, idx) => (
-                            <li key={idx} className="break-all">
-                              <a
-                                href={img}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-600 hover:text-blue-800 hover:underline"
-                              >
-                                {img}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
+                        {(() => {
+                          const images = issue.value.split(", ").filter(img => img.trim());
+                          const groupedByDomain = new Map<string, string[]>();
+                          
+                          images.forEach(img => {
+                            try {
+                              const url = new URL(img);
+                              const domain = url.origin;
+                              if (!groupedByDomain.has(domain)) {
+                                groupedByDomain.set(domain, []);
+                              }
+                              groupedByDomain.get(domain)!.push(img);
+                            } catch {
+                              // Hvis URL parsing fejler, brug "Andre" gruppe
+                              if (!groupedByDomain.has("Andre")) {
+                                groupedByDomain.set("Andre", []);
+                              }
+                              groupedByDomain.get("Andre")!.push(img);
+                            }
+                          });
+                          
+                          const groups = Array.from(groupedByDomain.entries());
+                          
+                          return (
+                            <div className="mt-2 space-y-2 max-h-96 overflow-y-auto">
+                              {groups.map(([domain, domainImages], groupIdx) => (
+                                <div key={groupIdx} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                                  <div className="mb-1 flex items-center justify-between">
+                                    <span className="text-xs font-semibold text-slate-700">{domain}</span>
+                                    <span className="text-xs text-slate-500">{domainImages.length} billeder</span>
+                                  </div>
+                                  <ul className="ml-2 space-y-0.5 max-h-32 overflow-y-auto">
+                                    {domainImages.map((img, idx) => (
+                                      <li key={idx} className="break-all text-xs">
+                                        <a
+                                          href={img}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-blue-600 hover:text-blue-800 hover:underline"
+                                        >
+                                          {img.replace(domain, "")}
+                                        </a>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ) : (
                       <p className="break-all">{issue.value}</p>
