@@ -443,14 +443,42 @@ function SEOAuditPageContent() {
             const batchEnd = Math.min(i + CONCURRENT_BATCHES, chunks.length);
             setProgress(`Auditerer batches ${batchStart}–${batchEnd} af ${totalBatches} (${allUrls.length} sider totalt)…`);
             
-            // Kør batches parallelt og opdater resultatet så snart hver batch er færdig
+            // Kør batches parallelt client-side hvor muligt, ellers brug API
             const groupPromises = group.map(async (chunk, idx) => {
               const batchNum = i + idx + 1;
-                const res = await fetch("/api/audit", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ urlBatch: chunk, origin, forceRefresh }),
-                });
+              
+              // Prøv client-side audit først (hurtigere, ingen server load)
+              try {
+                const { runBatchAuditClient } = await import("@/lib/auditClient");
+                const clientResults = await Promise.all(
+                  chunk.map(url => runBatchAuditClient(url, origin))
+                );
+                const validResults = clientResults.filter((r): r is NonNullable<typeof r> => r !== null);
+                
+                if (validResults.length > 0) {
+                  // Merge client-side results til samme format som server-side
+                  return {
+                    origin,
+                    pages: validResults,
+                    aggregated: [],
+                    overallScore: 0,
+                    categories: {},
+                    pagesAudited: validResults.length,
+                    totalUrlsInSitemap: chunk.length,
+                    improvementSuggestions: [],
+                  };
+                }
+              } catch (e) {
+                // Hvis client-side fejler (fx CORS), fal tilbage til server-side
+                console.warn(`Client-side audit fejlede for batch ${batchNum}, bruger server-side:`, e);
+              }
+              
+              // Fallback til server-side audit
+              const res = await fetch("/api/audit", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ urlBatch: chunk, origin, forceRefresh }),
+              });
               const data = await res.json().catch(() => ({}));
               if (!res.ok) throw new Error(data?.error || `Batch ${batchNum} fejlede`);
               if (data?.error) throw new Error(`Batch ${batchNum}: ${data.error}`);
@@ -1111,6 +1139,7 @@ function SEOAuditPageContent() {
                             <Link
                               key={url}
                               href={`/page/${encodeURIComponent(url)}`}
+                              prefetch={false}
                               onClick={(e) => e.stopPropagation()}
                               className="text-xs font-medium text-sky-600 hover:text-sky-700 hover:underline transition"
                             >
@@ -1211,6 +1240,7 @@ function SEOAuditPageContent() {
                         <Link
                           key={pageUrl}
                           href={`/page/${encodeURIComponent(pageUrl)}`}
+                          prefetch={false}
                           className="block rounded-lg border-2 border-sky-200 bg-white p-3 text-sm font-medium text-sky-600 transition hover:border-sky-400 hover:bg-gradient-to-r hover:from-sky-50 hover:to-blue-50 hover:shadow-md"
                         >
                           {pageUrl}
@@ -1258,6 +1288,7 @@ function SEOAuditPageContent() {
                   <Link
                     key={p?.url ?? `page-${idx}`}
                     href={`/page/${encodeURIComponent(p?.url ?? "")}`}
+                    prefetch={false}
                     className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-4 transition hover:border-slate-400 hover:shadow-sm"
                   >
                     <div className="min-w-0 flex-1">
