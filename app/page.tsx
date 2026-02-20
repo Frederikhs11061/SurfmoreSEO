@@ -22,21 +22,51 @@ function mergeBatchResults(
       allIssues.push({ ...i, pageUrl: p.url });
     }
   }
-  const byKey = new Map<string, AuditIssue & { pages: string[] }>();
+  const byKey = new Map<string, AuditIssue & { pages: string[]; allImages?: string[] }>();
   for (const i of allIssues) {
     const key = `${i.category}|${i.severity}|${i.title}`;
     const existing = byKey.get(key);
-    if (existing) {
-      if (i.pageUrl && !existing.pages.includes(i.pageUrl)) existing.pages.push(i.pageUrl);
+    
+    // For billeder uden alt-tekst, saml alle billed-URL'er
+    if (i.category === "Billeder" && i.title.includes("alt-tekst") && i.value) {
+      const imagesFromIssue = i.value.split(", ").filter(img => img.trim());
+      if (existing) {
+        if (i.pageUrl && !existing.pages.includes(i.pageUrl)) existing.pages.push(i.pageUrl);
+        // Saml alle billeder fra alle sider
+        if (!existing.allImages) existing.allImages = [];
+        existing.allImages.push(...imagesFromIssue);
+      } else {
+        byKey.set(key, {
+          ...i,
+          pages: i.pageUrl ? [i.pageUrl] : [],
+          allImages: imagesFromIssue,
+        });
+      }
     } else {
-      byKey.set(key, { ...i, pages: i.pageUrl ? [i.pageUrl] : [] });
+      // Normal aggregering for andre issues
+      if (existing) {
+        if (i.pageUrl && !existing.pages.includes(i.pageUrl)) existing.pages.push(i.pageUrl);
+      } else {
+        byKey.set(key, { ...i, pages: i.pageUrl ? [i.pageUrl] : [] });
+      }
     }
   }
-  const aggregated: AuditIssue[] = Array.from(byKey.values()).map(({ pages: p, ...rest }) => ({
-    ...rest,
-    pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
-    affectedPages: p.length > 0 ? p : undefined,
-  }));
+  const aggregated: AuditIssue[] = Array.from(byKey.values()).map(({ pages: p, allImages, ...rest }) => {
+    // For billeder uden alt-tekst, brug alle samlede billeder i value
+    if (rest.category === "Billeder" && rest.title.includes("alt-tekst") && allImages && allImages.length > 0) {
+      return {
+        ...rest,
+        value: allImages.join(", "),
+        pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
+        affectedPages: p.length > 0 ? p : undefined,
+      };
+    }
+    return {
+      ...rest,
+      pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
+      affectedPages: p.length > 0 ? p : undefined,
+    };
+  });
   const categories: Record<string, { passed: number; failed: number; warnings: number }> = {};
   for (const i of aggregated) {
     if (!categories[i.category]) categories[i.category] = { passed: 0, failed: 0, warnings: 0 };
@@ -911,14 +941,20 @@ function SEOAuditPageContent() {
                       <div className="mt-2 rounded bg-white/50 px-2 py-1.5 text-xs">
                         {issue.category === "Billeder" && issue.title.includes("alt-tekst") ? (
                           <div>
-                            <span className="font-medium text-slate-700">Billeder uden alt:</span>
-                            <ul className="mt-1 ml-4 list-disc space-y-0.5">
-                              {issue.value.split(", ").slice(0, 10).map((img, idx) => (
-                                <li key={idx} className="break-all">{img}</li>
+                            <span className="font-medium text-slate-700">Billeder uden alt-tekst:</span>
+                            <ul className="mt-1 ml-4 list-disc space-y-1 max-h-60 overflow-y-auto">
+                              {issue.value.split(", ").map((img, idx) => (
+                                <li key={idx} className="break-all">
+                                  <a
+                                    href={img}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:text-blue-800 hover:underline"
+                                  >
+                                    {img}
+                                  </a>
+                                </li>
                               ))}
-                              {issue.value.split(", ").length > 10 && (
-                                <li className="text-slate-500">... og {issue.value.split(", ").length - 10} flere</li>
-                              )}
                             </ul>
                           </div>
                         ) : (
@@ -983,8 +1019,30 @@ function SEOAuditPageContent() {
                 )}
                 {selectedIssue.value && (
                   <div className="mb-6 rounded-lg bg-gradient-to-br from-slate-50 to-slate-100 border-2 border-slate-200 p-4">
-                    <span className="font-semibold text-slate-800">Værdi:</span>
-                    <p className="mt-2 break-all text-sm text-slate-700">{selectedIssue.value}</p>
+                    {selectedIssue.category === "Billeder" && selectedIssue.title.includes("alt-tekst") ? (
+                      <div>
+                        <span className="font-semibold text-slate-800">Billeder uden alt-tekst:</span>
+                        <ul className="mt-2 ml-4 list-disc space-y-1 max-h-60 overflow-y-auto">
+                          {selectedIssue.value.split(", ").map((img, idx) => (
+                            <li key={idx} className="break-all">
+                              <a
+                                href={img}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:text-blue-800 hover:underline"
+                              >
+                                {img}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-slate-800">Værdi:</span>
+                        <p className="mt-2 break-all text-sm text-slate-700">{selectedIssue.value}</p>
+                      </>
+                    )}
                   </div>
                 )}
                 {selectedIssue.affectedPages && selectedIssue.affectedPages.length > 0 && (

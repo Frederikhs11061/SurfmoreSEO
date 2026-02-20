@@ -39,25 +39,55 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
     }
   }
 
-  const byKey = new Map<string, AuditIssue & { pages: string[] }>();
+  const byKey = new Map<string, AuditIssue & { pages: string[]; allImages?: string[] }>();
   for (const i of allIssues) {
     const key = `${i.category}|${i.severity}|${i.title}`;
     const existing = byKey.get(key);
-    if (existing) {
-      if (i.pageUrl && !existing.pages.includes(i.pageUrl)) existing.pages.push(i.pageUrl);
+    
+    // For billeder uden alt-tekst, saml alle billed-URL'er
+    if (i.category === "Billeder" && i.title.includes("alt-tekst") && i.value) {
+      const imagesFromIssue = i.value.split(", ").filter(img => img.trim());
+      if (existing) {
+        if (i.pageUrl && !existing.pages.includes(i.pageUrl)) existing.pages.push(i.pageUrl);
+        // Saml alle billeder fra alle sider
+        if (!existing.allImages) existing.allImages = [];
+        existing.allImages.push(...imagesFromIssue);
+      } else {
+        byKey.set(key, {
+          ...i,
+          pages: i.pageUrl ? [i.pageUrl] : [],
+          allImages: imagesFromIssue,
+        });
+      }
     } else {
-      byKey.set(key, {
-        ...i,
-        pages: i.pageUrl ? [i.pageUrl] : [],
-      });
+      // Normal aggregering for andre issues
+      if (existing) {
+        if (i.pageUrl && !existing.pages.includes(i.pageUrl)) existing.pages.push(i.pageUrl);
+      } else {
+        byKey.set(key, {
+          ...i,
+          pages: i.pageUrl ? [i.pageUrl] : [],
+        });
+      }
     }
   }
 
-  const aggregated: AuditIssue[] = Array.from(byKey.values()).map(({ pages: p, ...rest }) => ({
-    ...rest,
-    pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
-    affectedPages: p.length > 0 ? p : undefined,
-  }));
+  const aggregated: AuditIssue[] = Array.from(byKey.values()).map(({ pages: p, allImages, ...rest }) => {
+    // For billeder uden alt-tekst, brug alle samlede billeder i value
+    if (rest.category === "Billeder" && rest.title.includes("alt-tekst") && allImages && allImages.length > 0) {
+      return {
+        ...rest,
+        value: allImages.join(", "),
+        pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
+        affectedPages: p.length > 0 ? p : undefined,
+      };
+    }
+    return {
+      ...rest,
+      pageUrl: p.length > 0 ? (p.length === 1 ? p[0] : `${p.length} sider`) : undefined,
+      affectedPages: p.length > 0 ? p : undefined,
+    };
+  });
 
   const categories: Record<string, { passed: number; failed: number; warnings: number }> = {};
   for (const i of aggregated) {

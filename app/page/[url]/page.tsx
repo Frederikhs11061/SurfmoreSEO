@@ -186,7 +186,27 @@ export default function PageDetail() {
                 <p className="mt-1 text-sm opacity-90">{issue.message}</p>
                 {issue.value && (
                   <div className="mt-3 rounded-lg bg-white/50 px-3 py-2 text-xs">
-                    <p className="break-all">{issue.value}</p>
+                    {issue.category === "Billeder" && issue.title.includes("alt-tekst") ? (
+                      <div>
+                        <span className="font-medium text-slate-700">Billeder uden alt-tekst:</span>
+                        <ul className="mt-1 ml-4 list-disc space-y-1 max-h-60 overflow-y-auto">
+                          {issue.value.split(", ").map((img, idx) => (
+                            <li key={idx} className="break-all">
+                              <a
+                                href={img}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:text-blue-800 hover:underline"
+                              >
+                                {img}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : (
+                      <p className="break-all">{issue.value}</p>
+                    )}
                   </div>
                 )}
                 {issue.recommendation && (

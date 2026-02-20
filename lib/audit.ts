@@ -203,7 +203,23 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   imgs.each((_, el) => {
     const img = $(el);
     const alt = img.attr("alt");
-    const src = img.attr("src") || img.attr("data-src") || "";
+    let src = img.attr("src") || img.attr("data-src") || img.attr("data-lazy-src") || "";
+    
+    // Konverter relative URL'er til absolutte URL'er
+    if (src && !src.startsWith("http") && !src.startsWith("//") && !src.startsWith("data:")) {
+      try {
+        if (src.startsWith("/")) {
+          src = `${origin}${src}`;
+        } else {
+          src = new URL(src, normalizeUrl).href;
+        }
+      } catch {
+        // Hvis URL parsing fejler, brug original
+      }
+    } else if (src && src.startsWith("//")) {
+      src = `https:${src}`;
+    }
+    
     if (!alt || alt.trim() === "") {
       imagesWithoutAlt.push(src || "ukendt kilde");
     }
@@ -211,7 +227,8 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   const totalImgs = imgs.length;
   const imgsWithoutDimensions = imgs.filter((_, el) => !$(el).attr("width") && !$(el).attr("height")).length;
   if (totalImgs > 0 && imagesWithoutAlt.length > 0) {
-    const imgList = imagesWithoutAlt.slice(0, 5).join(", ") + (imagesWithoutAlt.length > 5 ? ` ... (+${imagesWithoutAlt.length - 5} flere)` : "");
+    // Gem alle billeder i value feltet, adskilt af komma
+    const imgList = imagesWithoutAlt.join(", ");
     add(issues, "Billeder", "error", "Billeder uden alt-tekst", `${imagesWithoutAlt.length} af ${totalImgs} mangler alt.`, imgList, "Tilføj alt på alle billeder.", normalizeUrl);
   } else if (totalImgs > 0) {
     add(issues, "Billeder", "pass", "Alt-tekst på billeder", `Alle ${totalImgs} har alt.`, undefined, undefined, normalizeUrl);
