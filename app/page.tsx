@@ -7,8 +7,8 @@ import type { AuditResult, AuditIssue, Severity, FullSiteResult, ImprovementSugg
 import { buildSuggestionsFromAggregated } from "@/lib/suggestions";
 import { getPillarForCategory, SEO_PILLARS, type SEOPillar } from "@/lib/seoPillars";
 
-const BATCH_SIZE = 100; // Maksimal batch-størrelse for hurtigst mulig audit
-const CONCURRENT_BATCHES = 15; // Kør 15 batches parallelt for maksimal hastighed
+const BATCH_SIZE = 50; // Reduceret batch-størrelse for at undgå 'Failed to fetch' netværksfejl
+const CONCURRENT_BATCHES = 3; // Reduceret fra 15 til 3 for at undgå connection drops i browseren
 
 function mergeBatchResults(
   batches: FullSiteResult[],
@@ -26,7 +26,7 @@ function mergeBatchResults(
   for (const i of allIssues) {
     const key = `${i.category}|${i.severity}|${i.title}`;
     const existing = byKey.get(key);
-    
+
     // For billeder uden alt-tekst, saml alle billed-URL'er
     if (i.category === "Billeder" && i.title.includes("alt-tekst") && i.value) {
       const imagesFromIssue = i.value.split(", ").filter(img => img.trim());
@@ -78,7 +78,7 @@ function mergeBatchResults(
   const passed = aggregated.filter((i) => i.severity === "pass").length;
   const overallScore = total > 0 ? Math.round((passed / total) * 100) : 0;
   const improvementSuggestions = buildSuggestionsFromAggregated(aggregated);
-  
+
   // Aggreger EEAT overordnet (over hele sitet) med trust signals metrics
   const allEeatData = pages.map(p => p.eeat).filter((e): e is NonNullable<typeof e> => e !== undefined);
   let aggregatedEeat: FullSiteResult["eeat"] | undefined;
@@ -90,13 +90,13 @@ function mergeBatchResults(
     const hasTrustworthiness = allEeatData.some(e => e.trustworthiness);
     const hasAboutPage = allEeatData.some(e => e.aboutPage);
     const hasContactInfo = allEeatData.some(e => e.contactInfo);
-    
+
     // Find mest almindelige forfatter
     const authors = allEeatData.map(e => e.author).filter((a): a is string => !!a);
     const authorCounts = new Map<string, number>();
     authors.forEach(a => authorCounts.set(a, (authorCounts.get(a) || 0) + 1));
     const mostCommonAuthor = Array.from(authorCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
-    
+
     // Beregn trust signals metrics
     const pagesWithAuthor = pages.filter(p => p.eeat?.author).length;
     const pagesWithSchema = pages.filter(p => {
@@ -115,12 +115,12 @@ function mergeBatchResults(
       const contentIssues = p.issues.filter(i => i.category === "Indhold" && (i.title === "Tekstmængde" || i.title === "God tekstmængde"));
       return contentIssues.length > 0;
     }).length;
-    
+
     // Tæl eksterne links totalt og sider med eksterne links
     let totalExternalLinks = 0;
     pages.forEach(p => {
-      const externalLinkIssues = p.issues.filter(i => 
-        i.category === "Links & canonical" && 
+      const externalLinkIssues = p.issues.filter(i =>
+        i.category === "Links & canonical" &&
         (i.title === "Eksterne links" || i.title === "Eksterne links mangler rel-attributter")
       );
       externalLinkIssues.forEach(issue => {
@@ -128,7 +128,7 @@ function mergeBatchResults(
         if (match) totalExternalLinks += parseInt(match[1], 10);
       });
     });
-    
+
     const eeatScore = [
       hasAuthor ? 1 : 0,
       hasAuthorBio ? 1 : 0,
@@ -137,7 +137,7 @@ function mergeBatchResults(
       hasAboutPage ? 1 : 0,
       hasContactInfo ? 1 : 0,
     ].reduce((a, b) => a + b, 0);
-    
+
     aggregatedEeat = {
       author: mostCommonAuthor,
       authorBio: hasAuthorBio,
@@ -154,7 +154,7 @@ function mergeBatchResults(
       pagesWithSufficientContent,
     };
   }
-  
+
   return {
     origin,
     pages,
@@ -187,9 +187,9 @@ function isFullSiteResult(r: AuditResult | FullSiteResult): r is FullSiteResult 
 function ImageListComponent({ images }: { images: string }) {
   const [showUrls, setShowUrls] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  
+
   const imageList = images.split(", ").filter(img => img.trim());
-  
+
   // Fjern duplikater baseret på URL uden query params
   const uniqueImages = new Map<string, string>();
   imageList.forEach(img => {
@@ -206,9 +206,9 @@ function ImageListComponent({ images }: { images: string }) {
       }
     }
   });
-  
+
   const uniqueUrls = Array.from(uniqueImages.values());
-  
+
   // Filtrer baseret på søgning
   const filteredUrls = uniqueUrls.filter(img => {
     if (!searchQuery.trim()) return true;
@@ -221,7 +221,7 @@ function ImageListComponent({ images }: { images: string }) {
       return img.toLowerCase().includes(query);
     }
   });
-  
+
   return (
     <div className="mt-1">
       <div className="mb-1 flex items-center justify-between">
@@ -235,7 +235,7 @@ function ImageListComponent({ images }: { images: string }) {
           {showUrls ? "Skjul URLs" : "Se URLs"}
         </button>
       </div>
-      
+
       {showUrls && (
         <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3">
           <div className="mb-2">
@@ -310,7 +310,7 @@ function SEOAuditPageContent() {
   const [result, setResult] = useState<AuditResult | FullSiteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Severity | "all">("all");
-  const [tab, setTab] = useState<"overview" | "suggestions" | "issues" | "pages" | "eeat">("overview");
+  const [tab, setTab] = useState<"overview" | "suggestions" | "issues" | "pages" | "eeat" | "links" | "speed">("overview");
   const [progress, setProgress] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortPagesBy, setSortPagesBy] = useState<"score-asc" | "score-desc" | "url" | "category">("score-asc");
@@ -344,7 +344,7 @@ function SEOAuditPageContent() {
       }
     }
   }, [url, result]);
-  
+
   // Gem resultat når det ændres (også ved tab skift)
   useEffect(() => {
     if (result && isFullSiteResult(result)) {
@@ -381,37 +381,71 @@ function SEOAuditPageContent() {
       if (fullSite) {
         // Tjek først om audit er cached
         if (!forceRefresh) {
-          const cachedAuditRes = await fetch("/api/audit", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: domain, fullSite: true, forceRefresh: false }),
-          });
-          if (cachedAuditRes.ok) {
-            const cachedData = await cachedAuditRes.json().catch(() => null);
-            if (cachedData && !cachedData.error) {
-              setResult(cachedData);
-              setLoading(false);
-              setProgress(null);
-              return; // Brug cached resultat
+          try {
+            const cachedAuditRes = await fetch("/api/audit", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: domain, fullSite: true, forceRefresh: false }),
+            });
+            if (cachedAuditRes.ok) {
+              const cachedData = await cachedAuditRes.json().catch(() => null);
+              if (cachedData && !cachedData.error) {
+                setResult(cachedData);
+                setLoading(false);
+                setProgress(null);
+                return; // Brug cached resultat
+              }
             }
+          } catch (cacheError) {
+            // Ignorer cache fejl og fortsæt med normal audit
+            console.warn("Cache check fejlede, fortsætter med normal audit:", cacheError);
           }
         }
-        
-        const sitemapRes = await fetch(`/api/sitemap?url=${encodeURIComponent(domain)}${forceRefresh ? "&forceRefresh=true" : ""}`);
-        const sitemapData = await sitemapRes.json().catch(() => ({}));
-        if (!sitemapRes.ok) throw new Error(sitemapData?.error || "Kunne ikke hente sitemap");
+
+        let sitemapRes: Response;
+        try {
+          const sitemapUrl = `/api/sitemap?url=${encodeURIComponent(domain)}${forceRefresh ? "&forceRefresh=true" : ""}`;
+          console.log("Fetching sitemap:", sitemapUrl);
+          sitemapRes = await fetch(sitemapUrl, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+          console.log("Sitemap response status:", sitemapRes.status, sitemapRes.ok);
+        } catch (fetchError) {
+          console.error("Sitemap fetch error:", fetchError);
+          throw new Error(`Kunne ikke hente sitemap: ${fetchError instanceof Error ? fetchError.message : "Network error"}`);
+        }
+        let sitemapData: any = {};
+        try {
+          sitemapData = await sitemapRes.json();
+        } catch (jsonError) {
+          console.error("Sitemap JSON parse error:", jsonError);
+          const text = await sitemapRes.text().catch(() => "Kunne ikke læse response");
+          throw new Error(`Kunne ikke parse sitemap response: ${text.substring(0, 200)}`);
+        }
+        if (!sitemapRes.ok) {
+          console.error("Sitemap response not OK:", sitemapRes.status, sitemapData);
+          throw new Error(sitemapData?.error || `Kunne ikke hente sitemap (${sitemapRes.status})`);
+        }
         const rawUrls = sitemapData.urls ?? sitemapData.urlsToAudit ?? sitemapData.allUrls;
         const allUrls: string[] = Array.isArray(rawUrls) ? rawUrls : [];
         const totalInSitemap = typeof sitemapData.totalInSitemap === "number" ? sitemapData.totalInSitemap : allUrls.length;
         setProgress(`Sitemap: ${allUrls.length} URLs. Starter audit…`);
         if (allUrls.length === 0) {
-          const fallback = await fetch("/api/audit", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: domain, fullSite: true, forceRefresh }),
-          });
+          let fallback: Response;
+          try {
+            fallback = await fetch("/api/audit", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: domain, fullSite: true, forceRefresh }),
+            });
+          } catch (fetchError) {
+            throw new Error(`Kunne ikke hente audit: ${fetchError instanceof Error ? fetchError.message : "Network error"}`);
+          }
           const fallbackData = await fallback.json().catch(() => ({}));
-          if (!fallback.ok) throw new Error(fallbackData?.error || "Audit fejlede");
+          if (!fallback.ok) throw new Error(fallbackData?.error || `Audit fejlede (${fallback.status})`);
           if (fallbackData?.error) throw new Error(fallbackData.error);
           setResult(fallbackData);
         } else {
@@ -422,7 +456,7 @@ function SEOAuditPageContent() {
           for (let i = 0; i < allUrls.length; i += BATCH_SIZE) {
             chunks.push(allUrls.slice(i, i + BATCH_SIZE));
           }
-          
+
           // Initialiser resultat med tom struktur for at undgå layout shift
           const initialResult: FullSiteResult = {
             origin,
@@ -435,18 +469,18 @@ function SEOAuditPageContent() {
             improvementSuggestions: [],
           };
           setResult(initialResult);
-          
+
           // Kør batches parallelt i grupper af CONCURRENT_BATCHES og opdater sideløbende
           for (let i = 0; i < chunks.length; i += CONCURRENT_BATCHES) {
             const group = chunks.slice(i, i + CONCURRENT_BATCHES);
             const batchStart = i + 1;
             const batchEnd = Math.min(i + CONCURRENT_BATCHES, chunks.length);
             setProgress(`Auditerer batches ${batchStart}–${batchEnd} af ${totalBatches} (${allUrls.length} sider totalt)…`);
-            
+
             // Kør batches parallelt client-side hvor muligt, ellers brug API
             const groupPromises = group.map(async (chunk, idx) => {
               const batchNum = i + idx + 1;
-              
+
               // Prøv client-side audit først (hurtigere, ingen server load)
               try {
                 const { runBatchAuditClient } = await import("@/lib/auditClient");
@@ -454,7 +488,7 @@ function SEOAuditPageContent() {
                   chunk.map(url => runBatchAuditClient(url, origin))
                 );
                 const validResults = clientResults.filter((r): r is NonNullable<typeof r> => r !== null);
-                
+
                 if (validResults.length > 0) {
                   // Merge client-side results til samme format som server-side
                   return {
@@ -472,28 +506,33 @@ function SEOAuditPageContent() {
                 // Hvis client-side fejler (fx CORS), fal tilbage til server-side
                 console.warn(`Client-side audit fejlede for batch ${batchNum}, bruger server-side:`, e);
               }
-              
+
               // Fallback til server-side audit
-              const res = await fetch("/api/audit", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ urlBatch: chunk, origin, forceRefresh }),
-              });
+              let res: Response;
+              try {
+                res = await fetch("/api/audit", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ urlBatch: chunk, origin, forceRefresh }),
+                });
+              } catch (fetchError) {
+                throw new Error(`Batch ${batchNum} fetch fejlede: ${fetchError instanceof Error ? fetchError.message : "Network error"}`);
+              }
               const data = await res.json().catch(() => ({}));
-              if (!res.ok) throw new Error(data?.error || `Batch ${batchNum} fejlede`);
+              if (!res.ok) throw new Error(data?.error || `Batch ${batchNum} fejlede (${res.status})`);
               if (data?.error) throw new Error(`Batch ${batchNum}: ${data.error}`);
               return data;
             });
-            
+
             // Vent på alle batches i gruppen og opdater resultatet sideløbende
             const groupResults = await Promise.all(groupPromises);
             batches.push(...groupResults);
-            
+
             // Opdater resultatet med det samme for at undgå reflow
             const currentMerged = mergeBatchResults(batches, totalInSitemap, origin);
             setResult(currentMerged);
           }
-          
+
           setProgress("Færdig!");
           // Final merge for at sikre alt er korrekt
           const finalMerged = mergeBatchResults(batches, totalInSitemap, origin);
@@ -532,13 +571,18 @@ function SEOAuditPageContent() {
           }
         }
       } else {
-        const res = await fetch("/api/audit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: domain, fullSite: false }),
-        });
+        let res: Response;
+        try {
+          res = await fetch("/api/audit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: domain, fullSite: false }),
+          });
+        } catch (fetchError) {
+          throw new Error(`Kunne ikke hente audit: ${fetchError instanceof Error ? fetchError.message : "Network error"}`);
+        }
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || "Audit fejlede");
+        if (!res.ok) throw new Error(data?.error || `Audit fejlede (${res.status})`);
         if (data?.error) throw new Error(data.error);
         setResult(data);
         // Gem også single-page resultat (kun essentiell data)
@@ -557,8 +601,17 @@ function SEOAuditPageContent() {
       setTab("overview");
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      setError(message || "Noget gik galt");
+      const errorMessage = message.includes("Failed to fetch")
+        ? `Kunne ikke oprette forbindelse til serveren. Tjek din internetforbindelse og prøv igen. Detaljer: ${message}`
+        : message || "Noget gik galt";
+      setError(errorMessage);
       console.error("SEO Audit error:", e);
+      if (e instanceof TypeError && e.message.includes("fetch")) {
+        console.error("Fetch fejl detaljer:", {
+          message: e.message,
+          stack: e.stack,
+        });
+      }
     } finally {
       setLoading(false);
       setProgress(null);
@@ -576,19 +629,19 @@ function SEOAuditPageContent() {
   const bySeverity =
     filter === "all" ? (iss: AuditIssue[]) => iss : (iss: AuditIssue[]) => iss.filter((i) => i.severity === filter);
   const filteredIssues = bySeverity(byPillar(issues));
-  
+
   // Søg og sorter issues
   const issueSearchLower = issueSearchQuery.trim().toLowerCase();
   const searchedIssues = issueSearchLower === ""
     ? filteredIssues
     : filteredIssues.filter(
-        (i) =>
-          i.title.toLowerCase().includes(issueSearchLower) ||
-          i.category.toLowerCase().includes(issueSearchLower) ||
-          i.message.toLowerCase().includes(issueSearchLower) ||
-          (i.affectedPages && i.affectedPages.some((p) => p.toLowerCase().includes(issueSearchLower)))
-      );
-  
+      (i) =>
+        i.title.toLowerCase().includes(issueSearchLower) ||
+        i.category.toLowerCase().includes(issueSearchLower) ||
+        i.message.toLowerCase().includes(issueSearchLower) ||
+        (i.affectedPages && i.affectedPages.some((p) => p.toLowerCase().includes(issueSearchLower)))
+    );
+
   const sortedIssues = [...searchedIssues].sort((a, b) => {
     if (issueSortBy === "severity") {
       const order: Record<Severity, number> = { error: 0, warning: 1, pass: 2 };
@@ -603,7 +656,7 @@ function SEOAuditPageContent() {
     }
     return 0;
   });
-  
+
   const filtered = sortedIssues;
   const errors = issues.filter((i) => i.severity === "error").length;
   const warnings = issues.filter((i) => i.severity === "warning").length;
@@ -616,14 +669,14 @@ function SEOAuditPageContent() {
   const pillarCategories: Record<SEOPillar, Record<string, { passed: number; failed: number; warnings: number; totalPages: number }>> = {
     "Teknisk SEO": {},
     "On-page SEO": {},
-    "Link building": {},
+    "Links": {},
   };
-  
+
   if (full?.pages) {
     // Tæl faktiske sider pr. kategori og severity
     for (const page of full.pages) {
       const categoryCounts = new Map<string, { passed: number; failed: number; warnings: number }>();
-      
+
       // Tæl issues pr. kategori på denne side
       for (const issue of page.issues) {
         if (!categoryCounts.has(issue.category)) {
@@ -634,7 +687,7 @@ function SEOAuditPageContent() {
         else if (issue.severity === "error") counts.failed++;
         else counts.warnings++;
       }
-      
+
       // Opdater pillarCategories med denne sides counts
       for (const [cat, counts] of Array.from(categoryCounts.entries())) {
         const pillar = getPillarForCategory(cat);
@@ -672,10 +725,10 @@ function SEOAuditPageContent() {
     searchLower === ""
       ? filteredPages
       : filteredPages.filter(
-          (p) =>
-            (p?.url ?? "").toLowerCase().includes(searchLower) ||
-            pageCategory(p?.url ?? "").toLowerCase().includes(searchLower)
-        );
+        (p) =>
+          (p?.url ?? "").toLowerCase().includes(searchLower) ||
+          pageCategory(p?.url ?? "").toLowerCase().includes(searchLower)
+      );
   const sortedPages = [...searchedPages].sort((a, b) => {
     const scoreA = typeof a?.score === "number" ? a.score : 0;
     const scoreB = typeof b?.score === "number" ? b.score : 0;
@@ -884,6 +937,20 @@ function SEOAuditPageContent() {
                 >
                   EEAT
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("links")}
+                  className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "links" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
+                >
+                  Links
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("speed")}
+                  className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === "speed" ? "border-slate-800 text-slate-800" : "border-transparent text-slate-500"}`}
+                >
+                  Site Speed
+                </button>
               </div>
             </>
           )}
@@ -906,7 +973,7 @@ function SEOAuditPageContent() {
                 const suggestionsStartIdx = (suggestionsPageNum - 1) * ITEMS_PER_PAGE;
                 const suggestionsEndIdx = suggestionsStartIdx + ITEMS_PER_PAGE;
                 const paginatedSuggestions = sortedSuggestions.slice(suggestionsStartIdx, suggestionsEndIdx);
-                
+
                 return (
                   <>
                     <div className="space-y-4">
@@ -996,7 +1063,7 @@ function SEOAuditPageContent() {
                 const overviewStartIdx = (overviewPageNum - 1) * ITEMS_PER_PAGE;
                 const overviewEndIdx = overviewStartIdx + ITEMS_PER_PAGE;
                 const paginatedEntries = allEntries.slice(overviewStartIdx, overviewEndIdx);
-                
+
                 return (
                   <>
                     {paginatedEntries.map(({ pillar, name, c }) => {
@@ -1153,20 +1220,20 @@ function SEOAuditPageContent() {
                           Klik for at se alle {issue.affectedPages.length} berørte sider →
                         </p>
                       )}
-                    {issue.value && (
-                      <div className="mt-2 rounded bg-white/50 px-2 py-1.5 text-xs">
-                        {issue.category === "Billeder" && issue.title.includes("alt-tekst") ? (
-                          <ImageListComponent images={issue.value} />
-                        ) : (
-                          <p className="break-all">{issue.value}</p>
-                        )}
-                      </div>
-                    )}
-                    {issue.recommendation && (
-                      <p className="mt-2 text-sm italic opacity-90">
-                        → {issue.recommendation}
-                      </p>
-                    )}
+                      {issue.value && (
+                        <div className="mt-2 rounded bg-white/50 px-2 py-1.5 text-xs">
+                          {issue.category === "Billeder" && issue.title.includes("alt-tekst") ? (
+                            <ImageListComponent images={issue.value} />
+                          ) : (
+                            <p className="break-all">{issue.value}</p>
+                          )}
+                        </div>
+                      )}
+                      {issue.recommendation && (
+                        <p className="mt-2 text-sm italic opacity-90">
+                          → {issue.recommendation}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
@@ -1332,11 +1399,10 @@ function SEOAuditPageContent() {
                           key={pageToShow}
                           type="button"
                           onClick={() => setPageNum(pageToShow)}
-                          className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
-                            pageNum === pageToShow
+                          className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${pageNum === pageToShow
                               ? "border-slate-800 bg-slate-800 text-white"
                               : "border-slate-300 text-slate-700 hover:bg-slate-50"
-                          }`}
+                            }`}
                         >
                           {pageToShow}
                         </button>
@@ -1364,7 +1430,7 @@ function SEOAuditPageContent() {
                   Experience, Expertise, Authoritativeness, and Trust signals across your website
                 </p>
               </div>
-              
+
               {full.eeat ? (
                 <>
                   {/* Top Row Metrics */}
@@ -1396,7 +1462,7 @@ function SEOAuditPageContent() {
                       </div>
                     </div>
                   </div>
-                  
+
                   {/* Trust Signals Breakdown */}
                   <div>
                     <h3 className="mb-4 text-lg font-semibold text-slate-800">Trust Signals Breakdown</h3>
@@ -1415,7 +1481,7 @@ function SEOAuditPageContent() {
                           />
                         </div>
                       </div>
-                      
+
                       <div className="rounded-lg border-2 border-slate-200 bg-white p-4 shadow-sm">
                         <div className="mb-2 flex items-center justify-between">
                           <span className="font-semibold text-slate-800">Structured Data</span>
@@ -1430,15 +1496,15 @@ function SEOAuditPageContent() {
                           />
                         </div>
                       </div>
-                      
+
                       <div className="rounded-lg border-2 border-slate-200 bg-white p-4 shadow-sm">
                         <div className="mb-2 flex items-center justify-between">
                           <span className="font-semibold text-slate-800">External Links</span>
                           <span className="font-bold text-slate-700">
                             {(() => {
                               const pagesWithExternal = full.pages.filter(p => {
-                                const externalLinkIssues = p.issues.filter(i => 
-                                  i.category === "Links & canonical" && 
+                                const externalLinkIssues = p.issues.filter(i =>
+                                  i.category === "Links & canonical" &&
                                   (i.title === "Eksterne links" || i.title === "Eksterne links mangler rel-attributter")
                                 );
                                 return externalLinkIssues.length > 0;
@@ -1450,20 +1516,22 @@ function SEOAuditPageContent() {
                         <div className="h-2 overflow-hidden rounded-full bg-slate-100">
                           <div
                             className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-green-600"
-                            style={{ width: `${(() => {
-                              const pagesWithExternal = full.pages.filter(p => {
-                                const externalLinkIssues = p.issues.filter(i => 
-                                  i.category === "Links & canonical" && 
-                                  (i.title === "Eksterne links" || i.title === "Eksterne links mangler rel-attributter")
-                                );
-                                return externalLinkIssues.length > 0;
-                              }).length;
-                              return full.pagesAudited > 0 ? Math.round((pagesWithExternal / full.pagesAudited) * 100) : 0;
-                            })()}%` }}
+                            style={{
+                              width: `${(() => {
+                                const pagesWithExternal = full.pages.filter(p => {
+                                  const externalLinkIssues = p.issues.filter(i =>
+                                    i.category === "Links & canonical" &&
+                                    (i.title === "Eksterne links" || i.title === "Eksterne links mangler rel-attributter")
+                                  );
+                                  return externalLinkIssues.length > 0;
+                                }).length;
+                                return full.pagesAudited > 0 ? Math.round((pagesWithExternal / full.pagesAudited) * 100) : 0;
+                              })()}%`
+                            }}
                           />
                         </div>
                       </div>
-                      
+
                       <div className="rounded-lg border-2 border-slate-200 bg-white p-4 shadow-sm">
                         <div className="mb-2 flex items-center justify-between">
                           <span className="font-semibold text-slate-800">Open Graph Tags</span>
@@ -1478,7 +1546,7 @@ function SEOAuditPageContent() {
                           />
                         </div>
                       </div>
-                      
+
                       <div className="rounded-lg border-2 border-slate-200 bg-white p-4 shadow-sm">
                         <div className="mb-2 flex items-center justify-between">
                           <span className="font-semibold text-slate-800">HTTPS Secure</span>
@@ -1493,7 +1561,7 @@ function SEOAuditPageContent() {
                           />
                         </div>
                       </div>
-                      
+
                       <div className="rounded-lg border-2 border-slate-200 bg-white p-4 shadow-sm">
                         <div className="mb-2 flex items-center justify-between">
                           <span className="font-semibold text-slate-800">Sufficient Content</span>
@@ -1515,6 +1583,373 @@ function SEOAuditPageContent() {
                 <div className="rounded-lg border-2 border-amber-200 bg-amber-50 p-6">
                   <p className="text-amber-800">
                     Ingen EEAT-data tilgængelig. Kør en fuld site-audit for at få en EEAT-vurdering.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === "links" && full && (
+            <div className="mt-6 space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">Links</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Analyse af interne og eksterne links på tværs af sitet
+                </p>
+              </div>
+
+              {/* Top Backlinks */}
+              <div className="rounded-lg border-2 border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-800">Top backlinks</h3>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Vi har ikke fundet nogen backlinks, der kan rapporteres til dette websted.
+                    </p>
+                  </div>
+                  <button className="text-slate-400 hover:text-slate-600">
+                    <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* On-Page Link Structure */}
+              {full.linkStats && (
+                <>
+                  <div className="rounded-lg border-2 border-slate-200 bg-white p-6 shadow-sm">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-800">On-Page Link Struktur</h3>
+                        <p className="mt-2 text-sm text-slate-600">
+                          Vi fandt {full.linkStats.totalLinks} samlede links.{" "}
+                          {full.linkStats.totalLinks > 0 && (
+                            <>
+                              {Math.round((full.linkStats.externalLinks / full.linkStats.totalLinks) * 100)}% af dine links er eksterne links og sender autoritet til andre websteder.{" "}
+                              {Math.round((full.linkStats.noFollowLinks / full.linkStats.totalLinks) * 100)}% af dine links er nofollow-links, hvilket betyder, at autoritet ikke sendes til disse destinationssider.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                      <button className="text-slate-400 hover:text-slate-600">
+                        <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Links on the Page - Donut Chart */}
+                  <div className="rounded-lg border-2 border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="mb-4 text-lg font-semibold text-slate-800">Links på siden</h3>
+                    <div className="flex flex-col items-center gap-6 md:flex-row md:items-start">
+                      {/* Donut Chart */}
+                      <div className="relative flex h-48 w-48 items-center justify-center">
+                        <svg className="h-full w-full -rotate-90 transform" viewBox="0 0 100 100">
+                          <circle
+                            cx="50"
+                            cy="50"
+                            r="40"
+                            fill="none"
+                            stroke="#e2e8f0"
+                            strokeWidth="8"
+                          />
+                          {(() => {
+                            const total = full.linkStats.totalLinks;
+                            const internal = full.linkStats.internalLinks;
+                            const externalFollow = full.linkStats.externalLinksFollow;
+                            const externalNoFollow = full.linkStats.externalLinksNoFollow;
+
+                            if (total === 0) return null;
+
+                            const internalPercent = (internal / total) * 100;
+                            const externalFollowPercent = (externalFollow / total) * 100;
+                            const externalNoFollowPercent = (externalNoFollow / total) * 100;
+
+                            let currentOffset = 0;
+
+                            return (
+                              <>
+                                {/* Internal Links */}
+                                <circle
+                                  cx="50"
+                                  cy="50"
+                                  r="40"
+                                  fill="none"
+                                  stroke="#3b82f6"
+                                  strokeWidth="8"
+                                  strokeDasharray={`${2 * Math.PI * 40 * (internalPercent / 100)} ${2 * Math.PI * 40}`}
+                                  strokeDashoffset={-2 * Math.PI * 40 * (currentOffset / 100)}
+                                />
+                                {currentOffset += internalPercent}
+
+                                {/* External Follow */}
+                                {externalFollowPercent > 0 && (
+                                  <>
+                                    <circle
+                                      cx="50"
+                                      cy="50"
+                                      r="40"
+                                      fill="none"
+                                      stroke="#10b981"
+                                      strokeWidth="8"
+                                      strokeDasharray={`${2 * Math.PI * 40 * (externalFollowPercent / 100)} ${2 * Math.PI * 40}`}
+                                      strokeDashoffset={-2 * Math.PI * 40 * (currentOffset / 100)}
+                                    />
+                                    {currentOffset += externalFollowPercent}
+                                  </>
+                                )}
+
+                                {/* External NoFollow */}
+                                {externalNoFollowPercent > 0 && (
+                                  <circle
+                                    cx="50"
+                                    cy="50"
+                                    r="40"
+                                    fill="none"
+                                    stroke="#ef4444"
+                                    strokeWidth="8"
+                                    strokeDasharray={`${2 * Math.PI * 40 * (externalNoFollowPercent / 100)} ${2 * Math.PI * 40}`}
+                                    strokeDashoffset={-2 * Math.PI * 40 * (currentOffset / 100)}
+                                  />
+                                )}
+                              </>
+                            );
+                          })()}
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="text-center">
+                            <div className="text-3xl font-bold text-slate-800">{full.linkStats.totalLinks}</div>
+                            <div className="text-xs font-medium text-slate-600">Total</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Legend */}
+                      <div className="flex-1 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="h-4 w-4 rounded bg-blue-500"></div>
+                            <span className="text-sm font-medium text-slate-700">Internal Links</span>
+                          </div>
+                          <span className="text-sm font-bold text-slate-800">{full.linkStats.internalLinks}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="h-4 w-4 rounded bg-green-500"></div>
+                            <span className="text-sm font-medium text-slate-700">External Links: Follow</span>
+                          </div>
+                          <span className="text-sm font-bold text-slate-800">{full.linkStats.externalLinksFollow}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="h-4 w-4 rounded bg-red-500"></div>
+                            <span className="text-sm font-medium text-slate-700">External Links: Nofollow</span>
+                          </div>
+                          <span className="text-sm font-bold text-slate-800">{full.linkStats.externalLinksNoFollow}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button className="mt-4 w-full rounded-lg bg-gradient-to-r from-sky-600 to-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:from-sky-700 hover:to-blue-700">
+                      Show Details
+                    </button>
+                  </div>
+
+                  {/* Friendly Links */}
+                  <div className="rounded-lg border-2 border-slate-200 bg-white p-6 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-800">Venlige links</h3>
+                        <p className="mt-2 text-sm text-slate-600">
+                          {full.linkStats.friendlyLinks
+                            ? "Dine link-URL'er ser ud til at være venlige (let menneskelige eller søgemaskine læsbare)."
+                            : "Nogle af dine link-URL'er kunne være mere venlige (undgå lange query parametre og komplekse strukturer)."}
+                        </p>
+                      </div>
+                      {full.linkStats.friendlyLinks ? (
+                        <svg className="h-6 w-6 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <svg className="h-6 w-6 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {tab === "speed" && full && (
+            <div className="mt-6 space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">Site Speed</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Performance analyse baseret på PageSpeed Insights metrikker
+                </p>
+              </div>
+
+              {full.speedStats ? (
+                <>
+                  {/* Overall Score */}
+                  <div className="flex items-center justify-center">
+                    <div className="relative flex h-48 w-48 items-center justify-center">
+                      <svg className="h-full w-full -rotate-90 transform" viewBox="0 0 100 100">
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          fill="none"
+                          stroke="#e2e8f0"
+                          strokeWidth="8"
+                        />
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          fill="none"
+                          stroke={full.speedStats.score && full.speedStats.score >= 90 ? "#10b981" : full.speedStats.score && full.speedStats.score >= 50 ? "#f59e0b" : "#ef4444"}
+                          strokeWidth="8"
+                          strokeDasharray={`${2 * Math.PI * 40 * ((full.speedStats.score || 0) / 100)} ${2 * Math.PI * 40}`}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center">
+                          <div className="text-4xl font-bold text-slate-800">{full.speedStats.score ?? 0}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Lab Data */}
+                  <div className="rounded-lg border-2 border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="mb-4 text-lg font-semibold text-slate-800">LABORATORIEDATA</h3>
+                    <div className="space-y-3">
+                      {full.speedStats.firstContentfulPaint !== undefined && (
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <span className="text-sm font-medium text-slate-700">First Contentful Paint</span>
+                          <span className={`text-sm font-bold ${full.speedStats.firstContentfulPaint < 1.8 ? "text-green-600" : full.speedStats.firstContentfulPaint < 3 ? "text-amber-600" : "text-red-600"}`}>
+                            {full.speedStats.firstContentfulPaint.toFixed(1)} s
+                          </span>
+                        </div>
+                      )}
+                      {full.speedStats.speedIndex !== undefined && (
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <span className="text-sm font-medium text-slate-700">Speed Index</span>
+                          <span className={`text-sm font-bold ${full.speedStats.speedIndex < 3.4 ? "text-green-600" : full.speedStats.speedIndex < 5.8 ? "text-amber-600" : "text-red-600"}`}>
+                            {full.speedStats.speedIndex.toFixed(1)} s
+                          </span>
+                        </div>
+                      )}
+                      {full.speedStats.largestContentfulPaint !== undefined && (
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <span className="text-sm font-medium text-slate-700">Largest Contentful Paint</span>
+                          <span className={`text-sm font-bold ${full.speedStats.largestContentfulPaint < 2.5 ? "text-green-600" : full.speedStats.largestContentfulPaint < 4 ? "text-amber-600" : "text-red-600"}`}>
+                            {full.speedStats.largestContentfulPaint.toFixed(1)} s
+                          </span>
+                        </div>
+                      )}
+                      {full.speedStats.timeToInteractive !== undefined && (
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <span className="text-sm font-medium text-slate-700">Time to Interactive</span>
+                          <span className={`text-sm font-bold ${full.speedStats.timeToInteractive < 3.8 ? "text-green-600" : full.speedStats.timeToInteractive < 7.3 ? "text-amber-600" : "text-red-600"}`}>
+                            {full.speedStats.timeToInteractive.toFixed(1)} s
+                          </span>
+                        </div>
+                      )}
+                      {full.speedStats.totalBlockingTime !== undefined && (
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <span className="text-sm font-medium text-slate-700">Total Blocking Time</span>
+                          <span className={`text-sm font-bold ${full.speedStats.totalBlockingTime < 200 ? "text-green-600" : full.speedStats.totalBlockingTime < 600 ? "text-amber-600" : "text-red-600"}`}>
+                            {full.speedStats.totalBlockingTime.toFixed(2)} s
+                          </span>
+                        </div>
+                      )}
+                      {full.speedStats.cumulativeLayoutShift !== undefined && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-slate-700">Cumulative Layout Shift</span>
+                          <span className={`text-sm font-bold ${full.speedStats.cumulativeLayoutShift < 0.1 ? "text-green-600" : full.speedStats.cumulativeLayoutShift < 0.25 ? "text-amber-600" : "text-red-600"}`}>
+                            {full.speedStats.cumulativeLayoutShift.toFixed(3)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Opportunities */}
+                  {full.speedStats.opportunities && full.speedStats.opportunities.length > 0 && (
+                    <div className="rounded-lg border-2 border-slate-200 bg-white p-6 shadow-sm">
+                      <h3 className="mb-4 text-lg font-semibold text-slate-800">MULIGHEDER</h3>
+                      <div className="space-y-3">
+                        {full.speedStats.opportunities.map((opp, idx) => (
+                          <div key={idx} className="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <span className="text-sm font-medium text-slate-700">{opp.title}</span>
+                            <span className="text-sm font-bold text-red-600">{opp.savings.toFixed(2)} s</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Additional Checks */}
+                  <div className="rounded-lg border-2 border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="mb-4 text-lg font-semibold text-slate-800">Yderligere checks</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-slate-700">Flash brugt?</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-slate-600">
+                            {full.speedStats.hasFlash
+                              ? "Flash-indhold identificeret"
+                              : "Intet Flash-indhold er blevet identificeret på din side."}
+                          </span>
+                          {!full.speedStats.hasFlash && (
+                            <svg className="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-slate-700">iFrames brugt?</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-slate-600">
+                            {full.speedStats.hasIframes
+                              ? "iFrames identificeret"
+                              : "Der er ikke registreret iFrames på din side."}
+                          </span>
+                          {!full.speedStats.hasIframes && (
+                            <svg className="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-slate-700">Favicon</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-slate-600">
+                            {full.speedStats.hasFavicon
+                              ? "Din side har specificeret en Favicon."
+                              : "Ingen Favicon identificeret"}
+                          </span>
+                          {full.speedStats.hasFavicon && (
+                            <svg className="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-lg border-2 border-amber-200 bg-amber-50 p-6">
+                  <p className="text-amber-800">
+                    Ingen Site Speed data tilgængelig. Kør en fuld site-audit for at få en Site Speed vurdering.
                   </p>
                 </div>
               )}

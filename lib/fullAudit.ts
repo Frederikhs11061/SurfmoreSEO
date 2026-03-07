@@ -7,7 +7,7 @@ import {
 } from "./audit";
 import { buildSuggestionsFromAggregated } from "./suggestions";
 
-const BATCH_SIZE = 100; // Maksimal batch-størrelse for hurtigst mulig audit
+const BATCH_SIZE = 50; // Reduceret batch-størrelse for hurtigst mulig audit uden at crashe browseren
 
 function buildSuggestions(
   aggregated: AuditIssue[],
@@ -43,7 +43,7 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
   for (const i of allIssues) {
     const key = `${i.category}|${i.severity}|${i.title}`;
     const existing = byKey.get(key);
-    
+
     // For billeder uden alt-tekst, saml alle billed-URL'er
     if (i.category === "Billeder" && i.title.includes("alt-tekst") && i.value) {
       const imagesFromIssue = i.value.split(", ").filter(img => img.trim());
@@ -102,7 +102,7 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
   const overallScore = total > 0 ? Math.round((passed / total) * 100) : 0;
 
   const improvementSuggestions = buildSuggestions(aggregated, byKey);
-  
+
   // Aggreger EEAT overordnet (over hele sitet) med trust signals metrics
   const allEeatData = pages.map(p => p.eeat).filter((e): e is NonNullable<typeof e> => e !== undefined);
   let aggregatedEeat: FullSiteResult["eeat"] | undefined;
@@ -113,12 +113,12 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
     const hasTrustworthiness = allEeatData.some(e => e.trustworthiness);
     const hasAboutPage = allEeatData.some(e => e.aboutPage);
     const hasContactInfo = allEeatData.some(e => e.contactInfo);
-    
+
     const authors = allEeatData.map(e => e.author).filter((a): a is string => !!a);
     const authorCounts = new Map<string, number>();
     authors.forEach(a => authorCounts.set(a, (authorCounts.get(a) || 0) + 1));
     const mostCommonAuthor = Array.from(authorCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
-    
+
     // Beregn trust signals metrics
     const pagesWithAuthor = pages.filter(p => p.eeat?.author).length;
     const pagesWithSchema = pages.filter(p => {
@@ -137,11 +137,11 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
       const contentIssues = p.issues.filter(i => i.category === "Indhold" && (i.title === "Tekstmængde" || i.title === "God tekstmængde"));
       return contentIssues.length > 0;
     }).length;
-    
+
     let totalExternalLinks = 0;
     pages.forEach(p => {
-      const externalLinkIssues = p.issues.filter(i => 
-        i.category === "Links & canonical" && 
+      const externalLinkIssues = p.issues.filter(i =>
+        i.category === "Links & canonical" &&
         (i.title === "Eksterne links" || i.title === "Eksterne links mangler rel-attributter")
       );
       externalLinkIssues.forEach(issue => {
@@ -149,7 +149,7 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
         if (match) totalExternalLinks += parseInt(match[1], 10);
       });
     });
-    
+
     const eeatScore = [
       hasAuthor ? 1 : 0,
       hasAuthorBio ? 1 : 0,
@@ -158,7 +158,7 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
       hasAboutPage ? 1 : 0,
       hasContactInfo ? 1 : 0,
     ].reduce((a, b) => a + b, 0);
-    
+
     aggregatedEeat = {
       author: mostCommonAuthor,
       authorBio: hasAuthorBio,
@@ -176,6 +176,41 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
     };
   }
 
+  // Aggreger link statistikker
+  let aggregatedLinkStats: FullSiteResult["linkStats"] | undefined;
+  if (pages.length > 0) {
+    const allLinkStats = pages.map(p => p.linkStats).filter((ls): ls is NonNullable<typeof ls> => ls !== undefined);
+    if (allLinkStats.length > 0) {
+      const totalLinks = allLinkStats.reduce((sum, ls) => sum + ls.totalLinks, 0);
+      const internalLinks = allLinkStats.reduce((sum, ls) => sum + ls.internalLinks, 0);
+      const externalLinks = allLinkStats.reduce((sum, ls) => sum + ls.externalLinks, 0);
+      const externalLinksFollow = allLinkStats.reduce((sum, ls) => sum + ls.externalLinksFollow, 0);
+      const externalLinksNoFollow = allLinkStats.reduce((sum, ls) => sum + ls.externalLinksNoFollow, 0);
+      const noFollowLinks = allLinkStats.reduce((sum, ls) => sum + ls.noFollowLinks, 0);
+
+      // Tjek om URLs er "venlige" (ingen query params, korte, læsbare)
+      const friendlyLinks = pages.every(p => {
+        try {
+          const url = new URL(p.url);
+          const path = url.pathname;
+          return path.length < 100 && !path.includes("?") && !path.includes("#");
+        } catch {
+          return true;
+        }
+      });
+
+      aggregatedLinkStats = {
+        totalLinks,
+        internalLinks,
+        externalLinks,
+        externalLinksFollow,
+        externalLinksNoFollow,
+        noFollowLinks,
+        friendlyLinks,
+      };
+    }
+  }
+
   return {
     origin,
     pages,
@@ -186,6 +221,7 @@ export async function runFullSiteAudit(domain: string): Promise<FullSiteResult> 
     totalUrlsInSitemap: totalInSitemap,
     improvementSuggestions,
     eeat: aggregatedEeat,
+    linkStats: aggregatedLinkStats,
   };
 }
 
@@ -196,7 +232,8 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
   const results = await Promise.all(toAudit.map(async (url) => {
     try {
       return await runAudit(url, url);
-    } catch {
+    } catch (e) {
+      console.error(`Fejl i batch for URL ${url}:`, e);
       return null; // Skip ved fejl
     }
   }));
@@ -239,7 +276,7 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
   const passed = aggregated.filter((i) => i.severity === "pass").length;
   const overallScore = total > 0 ? Math.round((passed / total) * 100) : 0;
   const improvementSuggestions = buildSuggestions(aggregated, byKey);
-  
+
   // Aggreger EEAT overordnet (over hele sitet) med trust signals metrics
   const allEeatData = pages.map(p => p.eeat).filter((e): e is NonNullable<typeof e> => e !== undefined);
   let aggregatedEeat: FullSiteResult["eeat"] | undefined;
@@ -250,12 +287,12 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
     const hasTrustworthiness = allEeatData.some(e => e.trustworthiness);
     const hasAboutPage = allEeatData.some(e => e.aboutPage);
     const hasContactInfo = allEeatData.some(e => e.contactInfo);
-    
+
     const authors = allEeatData.map(e => e.author).filter((a): a is string => !!a);
     const authorCounts = new Map<string, number>();
     authors.forEach(a => authorCounts.set(a, (authorCounts.get(a) || 0) + 1));
     const mostCommonAuthor = Array.from(authorCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
-    
+
     // Beregn trust signals metrics
     const pagesWithAuthor = pages.filter(p => p.eeat?.author).length;
     const pagesWithSchema = pages.filter(p => {
@@ -274,11 +311,11 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
       const contentIssues = p.issues.filter(i => i.category === "Indhold" && (i.title === "Tekstmængde" || i.title === "God tekstmængde"));
       return contentIssues.length > 0;
     }).length;
-    
+
     let totalExternalLinks = 0;
     pages.forEach(p => {
-      const externalLinkIssues = p.issues.filter(i => 
-        i.category === "Links & canonical" && 
+      const externalLinkIssues = p.issues.filter(i =>
+        i.category === "Links & canonical" &&
         (i.title === "Eksterne links" || i.title === "Eksterne links mangler rel-attributter")
       );
       externalLinkIssues.forEach(issue => {
@@ -286,7 +323,7 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
         if (match) totalExternalLinks += parseInt(match[1], 10);
       });
     });
-    
+
     const eeatScore = [
       hasAuthor ? 1 : 0,
       hasAuthorBio ? 1 : 0,
@@ -295,7 +332,7 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
       hasAboutPage ? 1 : 0,
       hasContactInfo ? 1 : 0,
     ].reduce((a, b) => a + b, 0);
-    
+
     aggregatedEeat = {
       author: mostCommonAuthor,
       authorBio: hasAuthorBio,
@@ -313,6 +350,40 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
     };
   }
 
+  // Aggreger link statistikker for batch
+  let aggregatedLinkStats: FullSiteResult["linkStats"] | undefined;
+  if (pages.length > 0) {
+    const allLinkStats = pages.map(p => p.linkStats).filter((ls): ls is NonNullable<typeof ls> => ls !== undefined);
+    if (allLinkStats.length > 0) {
+      const totalLinks = allLinkStats.reduce((sum, ls) => sum + ls.totalLinks, 0);
+      const internalLinks = allLinkStats.reduce((sum, ls) => sum + ls.internalLinks, 0);
+      const externalLinks = allLinkStats.reduce((sum, ls) => sum + ls.externalLinks, 0);
+      const externalLinksFollow = allLinkStats.reduce((sum, ls) => sum + ls.externalLinksFollow, 0);
+      const externalLinksNoFollow = allLinkStats.reduce((sum, ls) => sum + ls.externalLinksNoFollow, 0);
+      const noFollowLinks = allLinkStats.reduce((sum, ls) => sum + ls.noFollowLinks, 0);
+
+      const friendlyLinks = pages.every(p => {
+        try {
+          const url = new URL(p.url);
+          const path = url.pathname;
+          return path.length < 100 && !path.includes("?") && !path.includes("#");
+        } catch {
+          return true;
+        }
+      });
+
+      aggregatedLinkStats = {
+        totalLinks,
+        internalLinks,
+        externalLinks,
+        externalLinksFollow,
+        externalLinksNoFollow,
+        noFollowLinks,
+        friendlyLinks,
+      };
+    }
+  }
+
   return {
     origin,
     pages,
@@ -323,5 +394,6 @@ export async function runBatchAudit(urls: string[], origin: string): Promise<Ful
     totalUrlsInSitemap: toAudit.length,
     improvementSuggestions,
     eeat: aggregatedEeat,
+    linkStats: aggregatedLinkStats,
   };
 }

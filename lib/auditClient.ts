@@ -171,6 +171,7 @@ export async function runAuditClient(url: string, pageUrl?: string): Promise<Aud
   const externalLinks: string[] = [];
   const linksEmptyHref: string[] = [];
   const linksWithoutAnchorText: string[] = [];
+  let linkStats: AuditResult["linkStats"] | undefined;
   
   links.forEach((link) => {
     const href = link.getAttribute("href") || "";
@@ -214,16 +215,63 @@ export async function runAuditClient(url: string, pageUrl?: string): Promise<Aud
       add(issues, "Links & canonical", "pass", "Interne links", `${internalLinks.length} interne links fundet.`, undefined, undefined, normalizeUrl);
     }
     if (externalLinks.length > 0) {
-      const externalWithoutRel = externalLinks.filter((_, idx) => {
-        const link = links[idx];
-        return link && !link.getAttribute("rel")?.includes("nofollow") && !link.getAttribute("rel")?.includes("noopener");
+      const externalFollow: string[] = [];
+      const externalNoFollow: string[] = [];
+      const externalWithoutRel: string[] = [];
+      
+      links.forEach((link) => {
+        const href = link.getAttribute("href");
+        if (href && href.startsWith("http") && !href.startsWith(origin)) {
+          const rel = link.getAttribute("rel") || "";
+          if (rel.includes("nofollow")) {
+            externalNoFollow.push(href);
+          } else {
+            externalFollow.push(href);
+          }
+          if (!rel.includes("nofollow") && !rel.includes("noopener")) {
+            externalWithoutRel.push(href);
+          }
+        }
       });
+      
       if (externalWithoutRel.length > 0) {
         add(issues, "Links & canonical", "warning", "Eksterne links mangler rel-attributter", `${externalWithoutRel.length} eksterne links mangler rel=\"nofollow\" eller rel=\"noopener\".`, undefined, "Tilføj rel=\"nofollow noopener\" til eksterne links.", normalizeUrl);
       } else {
         add(issues, "Links & canonical", "pass", "Eksterne links", `${externalLinks.length} eksterne links med korrekt rel-attributter.`, undefined, undefined, normalizeUrl);
       }
+      
+      // Gem link statistikker
+      linkStats = {
+        totalLinks: internalLinks.length + externalLinks.length,
+        internalLinks: internalLinks.length,
+        externalLinks: externalLinks.length,
+        externalLinksFollow: externalFollow.length,
+        externalLinksNoFollow: externalNoFollow.length,
+        noFollowLinks: internalLinks.filter(l => l.hasNoFollow).length + externalNoFollow.length,
+      };
+    } else {
+      // Gem link statistikker (hvis ingen eksterne links)
+      linkStats = {
+        totalLinks: internalLinks.length + externalLinks.length,
+        internalLinks: internalLinks.length,
+        externalLinks: externalLinks.length,
+        externalLinksFollow: 0,
+        externalLinksNoFollow: 0,
+        noFollowLinks: internalLinks.filter(l => l.hasNoFollow).length,
+      };
     }
+  }
+  
+  // Hvis ingen links overhovedet, sæt linkStats til 0
+  if (!linkStats) {
+    linkStats = {
+      totalLinks: 0,
+      internalLinks: 0,
+      externalLinks: 0,
+      externalLinksFollow: 0,
+      externalLinksNoFollow: 0,
+      noFollowLinks: 0,
+    };
   }
   
   if (linksWithoutAnchorText.length > 0) {
@@ -312,7 +360,7 @@ export async function runAuditClient(url: string, pageUrl?: string): Promise<Aud
   const passed = issues.filter((i) => i.severity === "pass").length;
   const score = total > 0 ? Math.round((passed / total) * 100) : 0;
 
-  return { url: normalizeUrl, issues, score, categories, imagesWithoutAlt, eeat };
+  return { url: normalizeUrl, issues, score, categories, imagesWithoutAlt, eeat, linkStats };
 }
 
 // Batch audit client-side - returnerer samme format som server-side

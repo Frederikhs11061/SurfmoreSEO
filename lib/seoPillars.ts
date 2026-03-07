@@ -1,5 +1,5 @@
 /** SEO-piller: gruppering af audit-kategorier */
-export const SEO_PILLARS = ["Teknisk SEO", "On-page SEO", "Link building"] as const;
+export const SEO_PILLARS = ["Teknisk SEO", "On-page SEO", "Links"] as const;
 export type SEOPillar = (typeof SEO_PILLARS)[number];
 
 /** Map fra audit-kategori til pille */
@@ -17,7 +17,7 @@ export const categoryToPillar: Record<string, SEOPillar> = {
   "Social (OG)": "On-page SEO",
   "Social (Twitter)": "On-page SEO",
   EEAT: "On-page SEO",
-  "Links & canonical": "Link building",
+  "Links & canonical": "Links",
 };
 
 export function getPillarForCategory(category: string): SEOPillar {

@@ -28,6 +28,14 @@ export interface AuditResult {
     aboutPage?: boolean;
     contactInfo?: boolean;
   };
+  linkStats?: {
+    totalLinks: number;
+    internalLinks: number;
+    externalLinks: number;
+    externalLinksFollow: number;
+    externalLinksNoFollow: number;
+    noFollowLinks: number;
+  };
 }
 
 export interface ImprovementSuggestion {
@@ -64,6 +72,28 @@ export interface FullSiteResult {
     pagesWithOpenGraph?: number;
     pagesWithHttps?: number;
     pagesWithSufficientContent?: number;
+  };
+  linkStats?: {
+    totalLinks: number;
+    internalLinks: number;
+    externalLinks: number;
+    externalLinksFollow: number;
+    externalLinksNoFollow: number;
+    noFollowLinks: number;
+    friendlyLinks: boolean;
+  };
+  speedStats?: {
+    score?: number;
+    firstContentfulPaint?: number;
+    speedIndex?: number;
+    largestContentfulPaint?: number;
+    timeToInteractive?: number;
+    totalBlockingTime?: number;
+    cumulativeLayoutShift?: number;
+    opportunities?: Array<{ title: string; savings: number }>;
+    hasFlash?: boolean;
+    hasIframes?: boolean;
+    hasFavicon?: boolean;
   };
 }
 
@@ -111,6 +141,7 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
     }
     html = await res.text();
   } catch (e) {
+    console.error(`Fejl ved audit af ${normalizeUrl}:`, e);
     // Skip ved fejl også
     return null as any;
   }
@@ -204,7 +235,7 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
     const img = $(el);
     const alt = img.attr("alt");
     let src = img.attr("src") || img.attr("data-src") || img.attr("data-lazy-src") || "";
-    
+
     // Konverter relative URL'er til absolutte URL'er
     if (src && !src.startsWith("http") && !src.startsWith("//") && !src.startsWith("data:")) {
       try {
@@ -219,7 +250,7 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
     } else if (src && src.startsWith("//")) {
       src = `https:${src}`;
     }
-    
+
     if (!alt || alt.trim() === "") {
       imagesWithoutAlt.push(src || "ukendt kilde");
     }
@@ -243,33 +274,34 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   const linksEmptyHref: string[] = [];
   const linksWithoutAnchorText: string[] = [];
   const duplicateInternalLinks = new Map<string, number>();
-  
+  let linkStats: AuditResult["linkStats"] | undefined;
+
   links.each((_, el) => {
     const href = $(el).attr("href") || "";
     const text = $(el).text().trim() || $(el).attr("aria-label") || "";
     const rel = $(el).attr("rel") || "";
     const isImageLink = $(el).find("img").length > 0;
-    
+
     if (!href.trim() || href === "#" || href.startsWith("javascript:")) {
       linksEmptyHref.push(href || "(tom)");
       return;
     }
-    
+
     const isInternal = href.startsWith("/") || href.startsWith(origin) || (!href.startsWith("http") && !href.startsWith("mailto:") && !href.startsWith("tel:"));
     const fullUrl = isInternal && !href.startsWith("http") ? new URL(href, origin).href : href;
-    
+
     if (isInternal) {
       // Normaliser URL (fjern hash og query params for at tælle duplicates)
       const normalizedUrl = fullUrl.split("#")[0].split("?")[0];
       duplicateInternalLinks.set(normalizedUrl, (duplicateInternalLinks.get(normalizedUrl) || 0) + 1);
-      
+
       internalLinks.push({
         url: fullUrl,
         anchorText: text || (isImageLink ? ($(el).find("img").attr("alt") || "Billede-link") : "Ingen tekst"),
         hasNoFollow: rel.includes("nofollow"),
         isImageLink,
       });
-      
+
       if (!text && !isImageLink) {
         linksWithoutAnchorText.push(fullUrl);
       }
@@ -277,12 +309,12 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
       externalLinks.push(href);
     }
   });
-  
+
   // Analyse interne links
   if (linksEmptyHref.length > 0) {
     add(issues, "Links & canonical", "error", "Links med tom eller ugyldig href", `${linksEmptyHref.length} links med tom, # eller javascript: href.`, linksEmptyHref.slice(0, 5).join(", "), "Brug rigtige URLs eller button-elementer i stedet.", normalizeUrl);
   }
-  
+
   if (internalLinks.length === 0 && externalLinks.length === 0 && linksEmptyHref.length === 0) {
     add(issues, "Links & canonical", "warning", "Ingen links fundet", "Siden har ingen links.", undefined, "Tilføj interne links til relaterede sider for bedre navigation.", normalizeUrl);
   } else {
@@ -294,7 +326,7 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
       const duplicateCount = Array.from(duplicateInternalLinks.values()).filter(count => count > 1).length;
       const noFollowCount = internalLinks.filter(l => l.hasNoFollow).length;
       const imageLinksCount = internalLinks.filter(l => l.isImageLink).length;
-      
+
       let internalLinkMessage = `${internalLinks.length} interne links fundet (${uniqueInternalLinks} unikke URLs)`;
       if (duplicateCount > 0) {
         internalLinkMessage += `. ${duplicateCount} URLs gentages flere gange.`;
@@ -305,43 +337,81 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
       if (imageLinksCount > 0) {
         internalLinkMessage += ` ${imageLinksCount} billedlinks.`;
       }
-      
+
       add(issues, "Links & canonical", "pass", "Interne links", internalLinkMessage, undefined, undefined, normalizeUrl);
-      
+
       if (linksWithoutAnchorText.length > 0) {
         add(issues, "Links & canonical", "warning", "Interne links uden anchor tekst", `${linksWithoutAnchorText.length} interne links mangler beskrivende tekst.`, linksWithoutAnchorText.slice(0, 5).join(", "), "Tilføj beskrivende tekst til links for bedre accessibility og SEO.", normalizeUrl);
       }
-      
+
       if (duplicateCount > 5) {
         add(issues, "Links & canonical", "warning", "Mange duplikerede interne links", `${duplicateCount} interne URLs gentages flere gange på samme side.`, undefined, "Overvej at reducere antallet af links til samme URL på samme side.", normalizeUrl);
       }
-      
+
       if (noFollowCount > 0 && noFollowCount === internalLinks.length) {
         add(issues, "Links & canonical", "warning", "Alle interne links har nofollow", "Alle interne links har rel=\"nofollow\", hvilket forhindrer link juice.", undefined, "Fjern nofollow fra interne links medmindre det er nødvendigt.", normalizeUrl);
       }
     }
-    
+
     // Eksterne links analyse
     if (externalLinks.length === 0) {
       add(issues, "Links & canonical", "warning", "Ingen eksterne links", "Ingen eksterne links til autoritative kilder.", undefined, "Overvej at tilføje eksterne links til relevante kilder.", normalizeUrl);
+      // Gem link statistikker (hvis ingen eksterne links)
+      linkStats = {
+        totalLinks: internalLinks.length + externalLinks.length,
+        internalLinks: internalLinks.length,
+        externalLinks: externalLinks.length,
+        externalLinksFollow: 0,
+        externalLinksNoFollow: 0,
+        noFollowLinks: internalLinks.filter(l => l.hasNoFollow).length,
+      };
     } else {
       const externalWithoutRel: string[] = [];
+      const externalFollow: string[] = [];
+      const externalNoFollow: string[] = [];
       links.each((i, el) => {
         const href = $(el).attr("href");
         if (href && href.startsWith("http") && !href.startsWith(origin)) {
           const rel = $(el).attr("rel") || "";
+          if (rel.includes("nofollow")) {
+            externalNoFollow.push(href);
+          } else {
+            externalFollow.push(href);
+          }
           if (!rel.includes("nofollow") && !rel.includes("noopener")) {
             externalWithoutRel.push(href);
           }
         }
       });
-      
+
       if (externalWithoutRel.length > 0) {
         add(issues, "Links & canonical", "warning", "Eksterne links mangler rel-attributter", `${externalWithoutRel.length} eksterne links mangler rel="noopener" eller rel="nofollow".`, externalLinks.slice(0, 3).join(", "), "Tilføj rel=\"noopener\" eller rel=\"nofollow\" til eksterne links.", normalizeUrl);
       } else {
         add(issues, "Links & canonical", "pass", "Eksterne links", `${externalLinks.length} eksterne links fundet.`, undefined, undefined, normalizeUrl);
       }
+
+      // Gem link statistikker
+      linkStats = {
+        totalLinks: internalLinks.length + externalLinks.length,
+        internalLinks: internalLinks.length,
+        externalLinks: externalLinks.length,
+        externalLinksFollow: externalFollow.length,
+        externalLinksNoFollow: externalNoFollow.length,
+        noFollowLinks: internalLinks.filter(l => l.hasNoFollow).length + externalNoFollow.length,
+      };
     }
+  }
+
+  // Hvis ingen links overhovedet, sæt linkStats til 0
+  if (!linkStats) {
+    linkStats = {
+      totalLinks: 0,
+      internalLinks: 0,
+      externalLinks: 0,
+      externalLinksFollow: 0,
+      externalLinksNoFollow: 0,
+      noFollowLinks: 0,
+    };
   }
 
   // --- Indholdslængde ---
@@ -389,13 +459,13 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   // --- EEAT (samles overordnet i fullAudit, ikke per side) ---
   // Vi samler kun data her, men evaluerer ikke per side
   const bodyText = $("body").text().toLowerCase();
-  const author = $('meta[name="author"], [rel="author"], .author, [itemprop="author"]').first().text().trim() || 
-                 $('meta[property="article:author"]').attr("content") || "";
+  const author = $('meta[name="author"], [rel="author"], .author, [itemprop="author"]').first().text().trim() ||
+    $('meta[property="article:author"]').attr("content") || "";
   const hasAuthorBio = /biografi|om mig|about|author|forfatter/i.test(bodyText) || $(".author-bio, .author-info, [class*='author']").length > 0;
-  const hasExpertise = /ekspert|expert|erfaring|experience|kvalifikation|qualification/i.test(bodyText) || 
-                       $('[itemtype*="Person"], [itemtype*="Organization"]').length > 0;
+  const hasExpertise = /ekspert|expert|erfaring|experience|kvalifikation|qualification/i.test(bodyText) ||
+    $('[itemtype*="Person"], [itemtype*="Organization"]').length > 0;
   const hasTrustworthiness = /kontakt|contact|adresse|address|cvr|cvr-nr|telefon|phone/i.test(bodyText) ||
-                              $('[itemtype*="ContactPoint"], .contact, [class*="contact"]').length > 0;
+    $('[itemtype*="ContactPoint"], .contact, [class*="contact"]').length > 0;
   const hasAboutPage = $('a[href*="/om"], a[href*="/about"], a[href*="/om-os"]').length > 0;
   const hasContactInfo = $('a[href*="mailto:"], a[href*="tel:"], [itemtype*="ContactPoint"]').length > 0;
 
@@ -420,5 +490,5 @@ export async function runAudit(url: string, pageUrl?: string): Promise<AuditResu
   const passed = issues.filter((i) => i.severity === "pass").length;
   const score = total > 0 ? Math.round((passed / total) * 100) : 0;
 
-  return { url: normalizeUrl, issues, score, categories, imagesWithoutAlt, eeat };
+  return { url: normalizeUrl, issues, score, categories, imagesWithoutAlt, eeat, linkStats };
 }
